@@ -211,11 +211,14 @@ def breadthFirstSearchSequential {m : Type → Type}
   let mut lastUpdateTime : Nat := 0
   let mut cancelled := false
   while h_not_finished : sctx.val.1.hasFinished = false do
+    if ← shouldStop cancelToken progressInstanceId then
+      cancelled := true
+      break
     let sctx_val := sctx.val
     let h_sctx := sctx.property
     if let some (item, _) := sctx_val.2.dequeue? then
-      if let some boundary := sctx_val.1.checkDepthBoundary params th item.depth
-          (fun _ => sctx_val.2.toList.map QueueItem.state) then
+      if let some boundary ← sctx_val.1.checkDepthBoundary params th item.depth
+          (fun _ => sctx_val.2.toList.map QueueItem.state) (shouldStop cancelToken progressInstanceId) then
         trySetViolationFound progressInstanceId boundary
         updateProgressDuringBFS progressInstanceId boundary sctx_val.2.size
         return (boundary, sctx_val.2)

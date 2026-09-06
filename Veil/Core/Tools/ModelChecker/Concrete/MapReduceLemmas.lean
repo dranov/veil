@@ -80,6 +80,17 @@ theorem MapReduceSearchContextLocalInvariants.finished_change_visited_pred_in_in
   constructor ; on_goal 1=> constructor
   all_goals dsimp only ; try solve | assumption | grind
 
+/-- Cancellation weakens completion obligations but preserves all discovered states. -/
+theorem MapReduceSearchContextLocalInvariants.cancel
+  {globalSeen : ShardedTreeSetUSize σₕ}
+  {p q : MapReduceQueueItem σₕ σ → Prop}
+  {lctx : MapReduceSearchContextLocal σ κ σₕ asm}
+  (h : MapReduceSearchContextLocalInvariants sys params globalSeen p lctx) :
+  MapReduceSearchContextLocalInvariants sys params globalSeen q
+    ({ lctx.1 with finished := some (.earlyTermination .cancelled) }, lctx.2) := by
+  rcases h with ⟨h_sound, h_not_all, h_disjoint, h_domain, h_collected⟩
+  exact ⟨h_sound, by simp, h_disjoint, h_domain, by simp⟩
+
 theorem MapReduceSearchContextLocalInvariants.progress_by_one_state
   {globalSeen : ShardedTreeSetUSize σₕ}
   {p q : MapReduceQueueItem σₕ σ → Prop}

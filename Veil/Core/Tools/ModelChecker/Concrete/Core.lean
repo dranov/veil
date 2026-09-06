@@ -246,19 +246,21 @@ executing outgoing transitions. Depth counts transitions from an initial state.
 Deadlocks and action assertions need execution and are not checked at this boundary. -/
 def BaseSearchContext.checkDepthBoundary
   (depth : Nat) (states : Unit → List σ)
-  (ctx : BaseSearchContext σ κ σₕ asm) : Option (BaseSearchContext σ κ σₕ asm) := do
-  let bound ← params.earlyTerminationConditions.filterMap (fun
+  (ctx : BaseSearchContext σ κ σₕ asm)
+  (shouldCancel : IO Bool := pure false) : IO (Option (BaseSearchContext σ κ σₕ asm)) := do
+  let some bound := params.earlyTerminationConditions.filterMap (fun
     | .reachedDepthBound n => some n
-    | _ => none) |>.min?
-  if depth < bound then none else
-    let violations := (states ()).filterMap fun st =>
-      let names := params.invariants.filterMap fun p =>
-        if p.holdsOn th st then none else some p.name
-      if names.isEmpty then none else some (fp.view st, ViolationKind.safetyFailure names)
-    some { ctx with
-      violatingStates := violations ++ ctx.violatingStates
-      finished := some (.earlyTermination (.reachedDepthBound bound))
-      currentFrontierDepth := depth }
+    | _ => none) |>.min? | return none
+  if depth < bound then return none
+  let mut ctx := { ctx with currentFrontierDepth := depth }
+  for st in states () do
+    if ← shouldCancel then
+      return some { ctx with finished := some (.earlyTermination .cancelled) }
+    let names := params.invariants.filterMap fun p =>
+      if p.holdsOn th st then none else some p.name
+    if !names.isEmpty then
+      ctx := { ctx with violatingStates := (fp.view st, .safetyFailure names) :: ctx.violatingStates }
+  return some { ctx with finished := some (.earlyTermination (.reachedDepthBound bound)) }
 
 /-- Process the current state, queuing its successors. -/
 -- @[inline, specialize]

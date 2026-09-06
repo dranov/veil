@@ -201,6 +201,7 @@ private theorem processWorkQueue.subproof6 {α : Type u} {l : List α} :
 -- Then the proof about the invariant can be extrinsic.
 
 def processWorkQueue
+  (shouldCancel : IO Bool)
   {params : SearchParameters ρ σ} {th : ρ}
   {sys : EnumerableTransitionSystem ρ (List ρ) σ (List σ) ℤ κ (List (κ × ExecutionOutcome ℤ σ)) th}
   {globalSeen : ShardedTreeSetUSize σₕ}
@@ -208,18 +209,21 @@ def processWorkQueue
   {p q : MapReduceQueueItem σₕ σ → Prop} (h : ∀ x, q x ↔ p x ∨ x ∈ queue)
   (h_inqueue_reachable : ∀ item ∈ queue, sys.reachable item.state)
   (lctx : LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen p) :
-    LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen q :=
+    IO (LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen q) :=
   let ⟨v, hl⟩ := lctx
   match queue with
-  | [] => ⟨v, (processWorkQueue.subproof1 h) ▸ hl⟩
-  | item :: rest =>
+  | [] => pure ⟨v, (processWorkQueue.subproof1 h) ▸ hl⟩
+  | item :: rest => do
     if h_finished : v.hasFinished
-    then ⟨v, hl.finished_change_visited_pred_in_invs h_finished⟩
+    then return ⟨v, hl.finished_change_visited_pred_in_invs h_finished⟩
     else
-      let ⟨fpSt, curr⟩ := item
+      if ← shouldCancel then
+        return ⟨({ v.1 with finished := some (.earlyTermination .cancelled) }, v.2), hl.cancel⟩
+      let fpSt := item.fingerprint
+      let curr := item.state
       let v' := v.processState globalSeen params th fpSt curr (sys.tr th curr)
       -- CHECK Is this proper tail-recursive?
-      processWorkQueue rest
+      processWorkQueue shouldCancel rest
         (processWorkQueue.subproof2 h)
         (processWorkQueue.subproof4 h_inqueue_reachable)
         <| Subtype.mk v' <| hl.processState_progress fpSt curr
@@ -235,11 +239,12 @@ def bfsBigStep
   (globalSeen : ShardedTreeSetUSize σₕ)
   (completedDepth : Nat)
   (queue : List (MapReduceQueueItem σₕ σ))
-  (h_inqueue_reachable : ∀ item ∈ queue, sys.reachable item.state) :
-  m (LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen (· ∈ queue)) :=
+  (h_inqueue_reachable : ∀ item ∈ queue, sys.reachable item.state)
+  (shouldCancel : IO Bool := pure false) :
+  m (LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen (· ∈ queue)) := do
   let lctx : LawfulMapReduceSearchContextLocal sys params globalSeen (fun _ => False) :=
     ⟨MapReduceSearchContextLocal.initial completedDepth, MapReduceSearchContextLocalInvariants.initial sys params globalSeen completedDepth⟩
-  let res := lctx.processWorkQueue queue processWorkQueue.subproof6 h_inqueue_reachable
+  let res ← lctx.processWorkQueue shouldCancel queue processWorkQueue.subproof6 h_inqueue_reachable
   pure res
 
 end LawfulMapReduceSearchContextLocal
@@ -560,7 +565,11 @@ def breadthFirstSearchParallel {m : Type → Type}
   let mut cancelled := false
   let mut boundaryResult : Option (BaseSearchContext σ κ σₕ asm) := none
   let mut fullyExpandedDepth := 0
+  let peerStop ← IO.mkRef false
   while h_not_finished : mctx.val.base.hasFinished = false do
+    if ← shouldStop cancelToken progressInstanceId then
+      cancelled := true
+      break
     let mctxVal := mctx.val
     have h_not_finished_val : mctxVal.base.hasFinished = false := h_not_finished
     have h_mctx : MapReduceSearchContextMainInvariants sys params mctxVal := mctx.property
@@ -575,8 +584,8 @@ def breadthFirstSearchParallel {m : Type → Type}
         (h_mctx.setExploredAll_preserves_invs h_not_finished_val h_empty)
       break
     else
-      if let some boundary := base.checkDepthBoundary params th base.currentFrontierDepth
-          (fun _ => tovisit.map MapReduceQueueItem.state) then
+      if let some boundary ← base.checkDepthBoundary params th base.currentFrontierDepth
+          (fun _ => tovisit.map MapReduceQueueItem.state) (shouldStop cancelToken progressInstanceId) then
         boundaryResult := some boundary
         trySetViolationFound progressInstanceId boundary
         break
@@ -592,10 +601,14 @@ def breadthFirstSearchParallel {m : Type → Type}
       -- **CAVEAT**: The call to `IO.asTask` **SHOULD NOT** be put in this procedure,
       -- as that might cause parallelism to vanish!!! Instead, the call should be defined
       -- in some other file.
-      let tasks ← IteratedProd.taskSplit splitLists fun subList h_sublist_in =>
-        LawfulMapReduceSearchContextLocal.bfsBigStep params sys globalSeen completedDepth subList
+      let tasks ← IteratedProd.taskSplit splitLists fun subList h_sublist_in => do
+        let result ← LawfulMapReduceSearchContextLocal.bfsBigStep params sys globalSeen completedDepth subList
           (breadthFirstSearchParallel.subproof1 h_mctx.queue_sound splitLists
             (fun item hm => (ListSplit.splitList_mem_iff numSplits chunkSize numLarge tovisit item).mp hm) _ h_sublist_in)
+          (do return (← peerStop.get) || (← shouldStop cancelToken progressInstanceId))
+        trySetViolationFound progressInstanceId result.val.1
+        if result.val.1.hasFinished then peerStop.set true
+        return result
       let results ← IteratedProd.mapM
         (T₂ := (fun a => LawfulMapReduceSearchContextLocal sys params globalSeen (· ∈ a)))
         (fun task => IO.ofExcept task.get) tasks

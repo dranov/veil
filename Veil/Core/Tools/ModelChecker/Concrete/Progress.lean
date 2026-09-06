@@ -306,24 +306,20 @@ inductive SearchPeriodicProgressUpdate where
 -- FIXME: Use `Option` to unify the two functions?
 def checkCancellationWithPeriodicUpdate (lastUpdateTime updateTimeInterval : Nat)
   (cancelToken : IO.CancelToken) (ctx : BaseSearchContext σ κ σₕ asm) (qSize : Nat) : m SearchPeriodicProgressUpdate := do
+  if ← shouldStop cancelToken progressInstanceId then return .searchCancelled
   let now ← IO.monoMsNow
   if now - lastUpdateTime ≥ updateTimeInterval then
-    if ← shouldStop cancelToken progressInstanceId then
-      return .searchCancelled
-    else
-      updateProgressDuringBFS progressInstanceId ctx qSize
-      return .updateTime now
+    updateProgressDuringBFS progressInstanceId ctx qSize
+    return .updateTime now
   else
     return .noUpdate
 
 def checkCancellationWithoutPeriodicUpdate (lastUpdateTime updateTimeInterval : Nat)
   (cancelToken : IO.CancelToken) : m SearchPeriodicProgressUpdate := do
+  if ← shouldStop cancelToken progressInstanceId then return .searchCancelled
   let now ← IO.monoMsNow
   if now - lastUpdateTime ≥ updateTimeInterval then
-    if ← shouldStop cancelToken progressInstanceId then
-      return .searchCancelled
-    else
-      return .updateTime now
+    return .updateTime now
   else
     return .noUpdate
 
