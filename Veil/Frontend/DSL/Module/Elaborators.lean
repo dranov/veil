@@ -704,6 +704,19 @@ elab_rules : command
     let resultTerm ← mkVeilExecActionResultTerm mod instTerm theoryTerm stateTerm actionTerm
     elabVeilCommand <| ← `(command| #eval $resultTerm)
 
+/-- Verification feedback is suppressed during compiled replay, so its message guards
+must be suppressed with it. Guards around ordinary declarations still run normally. -/
+def elabGuardedCompileCheck (isCheck : Syntax → Bool) : CommandElab := fun stx => do
+  unless ← isModelCheckCompileMode do throwUnsupportedSyntax
+  match stx with
+  | `(command| $[$_dc?:docComment]? #guard_msgs $(_spec?)? in $cmd) =>
+    if isCheck cmd.raw then elabCommand cmd else throwUnsupportedSyntax
+  | _ => throwUnsupportedSyntax
+
+@[command_elab Lean.guardMsgsCmd]
+def elabGuardedModelCheck : CommandElab := elabGuardedCompileCheck fun cmd =>
+  #[`Veil.modelCheck, `Veil.checkInvariants, `Veil.checkAction, `Veil.genTheorems].contains cmd.getKind
+
 @[command_elab Veil.modelCheck]
 def elabModelCheck : CommandElab := fun stx => do
   if (← isModelCheckCompileMode) && !veil.__modelCheckCompileTarget.get (← getOptions) then return
@@ -739,7 +752,11 @@ where
     -- The original command already checked this proof; native execution does not need it.
     let some modelCheckEnd := (if stx[5].isNone then stx.getTailPos? else stx[5].getPos?)
       | throwError "Unexpected error: #model_check has no end position"
+    -- cmdPos identifies the outer command, including a surrounding #guard_msgs.
+    -- Keep earlier complete commands without copying an unfinished wrapper.
+    let prefixEnd := (← read).cmdPos
     ModelChecker.Compilation.generateModelSourcePrefix src modelCheckStart modelCheckEnd
+      (if prefixEnd == 0 then modelCheckStart else prefixEnd)
 
   /-- Prepend `name` with `mod.name`. Useful when expressions are printed out for debugging. -/
   mkIdentWithModName (mod : Module) (name : Name) : Ident :=

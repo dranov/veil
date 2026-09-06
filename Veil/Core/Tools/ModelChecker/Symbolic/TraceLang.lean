@@ -428,6 +428,16 @@ def elabTraceSpec (r : TSyntax `expected_smt_result) (name : Option (TSyntax `id
     displayTraceStreamingResults stx isExpectedSat vcName vcFilter
 
 
+@[command_elab Lean.guardMsgsCmd]
+def elabGuardedTraceCompileCheck : CommandElab := elabGuardedCompileCheck fun cmd =>
+  match cmd with
+  | `(command| $_r:expected_smt_result trace [ $_name ] { $_spec:traceSpec } $_pf:term)
+  | `(command| $_r:expected_smt_result trace [ $_name ] { $_spec:traceSpec })
+  | `(command| $_r:expected_smt_result trace { $_spec:traceSpec } $_pf:term)
+  | `(command| $_r:expected_smt_result trace { $_spec:traceSpec }) => true
+  | _ => false
+
+
 elab_rules : command
   | `(command| $r:expected_smt_result trace [ $name ] { $spec:traceSpec } $pf:term) => elabTraceSpec r (some name) spec (some pf)
   | `(command| $r:expected_smt_result trace [ $name ] { $spec:traceSpec }) => elabTraceSpec r (some name) spec none

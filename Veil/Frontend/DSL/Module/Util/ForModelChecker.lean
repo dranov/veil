@@ -12,11 +12,12 @@ def findPosAfterImports (src : String) : IO String.Pos.Raw := do
 
 /-- Replay the entire command prefix. Earlier model checks are suppressed by an option,
 while declarations, local instances, options, and namespace commands remain intact. -/
-def generateModelSourcePrefix (src : String) (commandStart commandEnd : String.Pos.Raw) : IO String := do
+def generateModelSourcePrefix (src : String) (commandStart commandEnd : String.Pos.Raw)
+    (prefixEnd : String.Pos.Raw := commandStart) : IO String := do
   let afterImports ← findPosAfterImports src
   let preamble := "\nset_option veil.__modelCheckCompileMode true\nset_option veil.__modelCheckCompileTarget false\n"
   return String.Pos.Raw.extract src 0 afterImports ++ preamble ++
-    String.Pos.Raw.extract src afterImports commandStart ++
+    String.Pos.Raw.extract src afterImports prefixEnd ++
     "\nset_option veil.__modelCheckCompileTarget true\n" ++
     String.Pos.Raw.extract src commandStart commandEnd ++ "\n"
 
