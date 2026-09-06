@@ -42,16 +42,13 @@ open Lean Elab Command in
 @[command_elab displayTraceCmd]
 def elabDisplayTraceCmd : CommandElab := fun
   | stx@`(#displayTrace $trace) => do
-    let t ← `(open ProofWidgets.Jsx in <TraceDisplayViewer trace={$trace} layout={"vertical"} />)
+    let t ← `(open ProofWidgets.Jsx in <TraceDisplayViewer result={Lean.Json.mkObj [("trace", $trace)]} layout={"vertical"} />)
     let html ← ← liftTermElabM <| ProofWidgets.HtmlCommand.evalCommandMHtml <| ← ``(HtmlEval.eval $t)
     liftCoreM <| Widget.savePanelWidgetInfo
       (hash HtmlDisplayPanel.javascript)
       (return json% { html: $(← rpcEncode html) })
       stx
   | stx => throwError "Unexpected syntax {stx}."
-
--- macro_rules
---  | `(#displayTrace $trace:term) => `(open ProofWidgets.Jsx in #html <TraceDisplayViewer trace={$trace} layout={"vertical"} />)
 
 end DisplayTraceCommand
 
