@@ -304,26 +304,38 @@ def MapReduceSearchContextTemp.mergeOne {numShards : USize}
   let ⟨mbase, mq, st⟩ := acc
   let (lbase, lq) := lctx
   let (mq', st') := lq.foldl (init := (mq, st)) mergeOne.innerMerge
-  ⟨mbase.mergeWithoutDepthChangeNoLog lbase, mq', st'⟩
+  -- Local queues are already deduplicated. Remove discovery credit for entries
+  -- contributed by an earlier worker in this reduction, retaining generated counts.
+  let stats := lq.foldl (init := lbase.actionStatsMap) fun stats item =>
+    if st.contains item.fingerprint then
+      match lbase.log[item.fingerprint]? with
+      | some (some (_, label)) => ActionStatUpdate.removeDuplicate label stats
+      | _ => stats
+    else stats
+  ⟨mbase.mergeWithoutDepthChangeNoLog { lbase with actionStatsMap := stats }, mq', st'⟩
 
 omit [Ord σₕ] in
 theorem MapReduceSearchContextTemp.mergeOne_foldl_descriptive {numShards : USize}
   (acc : MapReduceSearchContextTemp σ κ σₕ asm numShards) (lctxs : List (MapReduceSearchContextLocal σ κ σₕ asm)) :
   let res := lctxs.foldl (init := acc) MapReduceSearchContextTemp.mergeOne
-  res.base = (lctxs.map Prod.fst).foldl (init := acc.base) BaseSearchContext.mergeWithoutDepthChangeNoLog ∧
+  res.base.finished = acc.base.finished.or
+    (((lctxs.map Prod.fst).find? (·.hasFinished)).bind (·.finished)) ∧
   mergeOne.innerMergeDescription (acc.tovisit, acc.tempSeen) (res.tovisit, res.tempSeen)
     (∃ lctx ∈ lctxs, · ∈ lctx.2) := by
   dsimp only
   induction lctxs generalizing acc with
   | nil =>
     constructor
-    · rfl
+    · simp [List.foldl]
     · exists [] ; simp [List.foldl]
   | cons lctx lctxs ih =>
     dsimp [List.foldl]
     specialize ih (mergeOne acc lctx) ; rcases ih with ⟨ih1, ih2⟩
     constructor
-    · rw [ih1] ; rfl
+    · rw [ih1]
+      simp only [mergeOne, BaseSearchContext.mergeWithoutDepthChangeNoLog,
+        List.find?, BaseSearchContext.hasFinished]
+      cases h1 : acc.base.finished <;> cases h2 : lctx.1.finished <;> simp_all
     · have hh := mergeOne.innerMerge_foldl_descriptive (acc.tovisit, acc.tempSeen) lctx.2
       rewrite (occs := .pos [1, 2]) [mergeOne] at ih2
       set e := lctx.2.foldl mergeOne.innerMerge (acc.tovisit, acc.tempSeen)
@@ -425,11 +437,10 @@ theorem MapReduceSearchContextMain.mergeWithLocalOnes_preserves_invs
   generalize IteratedProd.subtypesToList lctxs = lctxs' at *
   set merged := lctxs'.foldl _ _ with heq
   have htmp2 := ({ base := ctx', tovisit := [], tempSeen := ShardedHashSetUSize.emptyUSize gs.numShards gs.h_numShards_pos : MapReduceSearchContextTemp σ κ σₕ asm gs.numShards }).mergeOne_foldl_descriptive lctxs'
-  dsimp at htmp2 ; rw [← heq] at htmp2 ; rcases htmp2 with ⟨h_base, h_merge_desc⟩
-  have h_base_desc := BaseSearchContext.mergeWithoutDepthChangeNoLog_foldl_description ctx' (lctxs'.map Prod.fst)
+  dsimp at htmp2 ; rw [← heq] at htmp2 ; rcases htmp2 with ⟨h_base_desc, h_merge_desc⟩
   simp [BaseSearchContext.hasFinished] at h_not_finished
-  dsimp at h_base_desc ; rw [← h_base, h_not_finished] at h_base_desc ; dsimp at h_base_desc
-  clear heq h_base ; clear_value merged
+  rw [h_not_finished] at h_base_desc ; dsimp at h_base_desc
+  clear heq ; clear_value merged
 
   rcases merged with ⟨mbase, mq, st⟩
   rcases h_merge_desc with ⟨pfx, h_pfx, h_nodup, h_in_pfx, h_inQ, h_fps⟩

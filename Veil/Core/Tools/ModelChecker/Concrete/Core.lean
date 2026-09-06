@@ -54,6 +54,11 @@ def ActionStat.update (distinct? : Bool) (stat : ActionStat) : ActionStat :=
   let ⟨sg, ds⟩ := stat
   if distinct? then ⟨sg.succ, ds.succ⟩ else ⟨sg.succ, ds⟩
 
+/-- Correct a worker-local discovery that another worker already contributed. -/
+@[inline]
+def ActionStat.removeDuplicate (stat : ActionStat) : ActionStat :=
+  { stat with distinctStates := stat.distinctStates - 1 }
+
 @[inline]
 def ActionStat.merge (stat1 stat2 : ActionStat) : ActionStat :=
   let ⟨sg1, ds1⟩ := stat1
@@ -92,6 +97,8 @@ class ActionStatUpdate (κ : Type u) (asm : outParam (Type v)) where
   /-- Empty stats map -/
   empty : asm
   increment : κ → Bool → asm → asm
+  /-- Remove one duplicate discovery without changing the generated-outcome count. -/
+  removeDuplicate : κ → asm → asm
   /-- Combine (sum) two stats maps -/
   merge : asm → asm → asm
   -- /-- Read the count for a specific label -/
@@ -104,6 +111,7 @@ instance (priority := high) [instf : FinEncodableInjOnly κ] [inste : Enumeratio
   ActionStatUpdate κ (Array ActionStat) where
   empty := Array.replicate instf.card default
   increment label distinct? arr := arr.modify (instf.encode label).val (ActionStat.update distinct?)
+  removeDuplicate label arr := arr.modify (instf.encode label).val ActionStat.removeDuplicate
   merge arr1 arr2 := arr1.zipWith ActionStat.merge arr2
   dump arr := inste.allValues.map fun label =>
     let idx := instf.encode label
@@ -119,6 +127,9 @@ instance (priority := high + 100) [instf : FinEncodableInjOnly κ] [inste : Enum
   increment label distinct? vec :=
     let idx := instf.encode label
     vec.modify idx.val (ActionStat.update distinct?) idx.isLt
+  removeDuplicate label vec :=
+    let idx := instf.encode label
+    vec.modify idx.val ActionStat.removeDuplicate idx.isLt
   merge vec1 vec2 := vec1.zipWith ActionStat.merge vec2
   dump vec := inste.allValues.map fun label =>
     let idx := instf.encode label
@@ -129,6 +140,7 @@ instance (priority := high + 100) [instf : FinEncodableInjOnly κ] [inste : Enum
 instance (priority := low) [BEq κ] [Hashable κ] [Repr κ] : ActionStatUpdate κ (ActionStatsMap κ) where
   empty := {}
   increment label distinct? m := m.update distinct? label
+  removeDuplicate label m := m.alter label (·.map ActionStat.removeDuplicate)
   merge m1 m2 := m1.combine m2
   -- lookup label m := m.getD label 0
   dump m := m.fold (init := []) fun acc label stat =>
