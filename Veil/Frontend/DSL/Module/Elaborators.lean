@@ -878,8 +878,7 @@ where
   verifyBinaryExists (buildFolder : System.FilePath) (instanceId : Nat) : IO (Option System.FilePath) := do
     let binPath := buildFolder / ".lake" / "build" / "bin"
     if ← (binPath / "ModelCheckerMain").pathExists then return some binPath
-    ModelChecker.Concrete.finishProgress instanceId (errorJson s!"Binary not found at {binPath}")
-    return none
+    throw <| IO.userError s!"Compiled model checker binary not found at {binPath}"
 
   /-- Run the model checker binary and finish with result. Returns true if completed. -/
   runBinaryAndFinish (binPath : System.FilePath) (parallelCfg : Option ModelChecker.ParallelConfig)
@@ -947,7 +946,9 @@ where
     let isViolation := resultJson.getObjValD "result" == Json.str "found_violation" ||
                        resultJson.getObjValD "error" != .null
     let violationIsError := veil.violationIsError.get (← getOptions)
-    if isViolation && violationIsError then logErrorAt stx msg else logInfoAt stx msg
+    if resultJson.getObjValD "error" != .null || (isViolation && violationIsError) then
+      logErrorAt stx msg
+    else logInfoAt stx msg
 
   /-- Allocate a model check context with progress tracking. -/
   allocModelCheckContext (mod : Module) (stx : Syntax)
@@ -977,9 +978,9 @@ where
     let some resultJson ← ModelChecker.Concrete.getResultJson ctx.instanceId | return
     logModelCheckResult ctx.stx resultJson
 
-  /-- Compile the model. Returns the build folder path if compilation succeeded, none otherwise. -/
+  /-- Compile the model. Failure is an exception so compiled-only requests cannot silently succeed. -/
   compileModel (mod : Module) (sourceFile : String) (modelSource : String)
-      (instanceId : Nat) : IO (Option System.FilePath) := do
+      (instanceId : Nat) : IO System.FilePath := do
     let buildFolder ← ModelChecker.Compilation.createBuildFolder sourceFile modelSource mod.name.toString
     ModelChecker.Compilation.markRegistryInProgress sourceFile instanceId buildFolder
     let result ← ModelChecker.Compilation.runProcessWithStatusCallback
@@ -988,9 +989,9 @@ where
       (fun line isError elapsedMs => ModelChecker.Concrete.updateCompilationLog instanceId elapsedMs line isError)
     if result.exitCode != 0 then
       ModelChecker.Concrete.updateCompilationStatus instanceId (.failed (mkCompilationErrorMsg result))
-      return none
+      throw <| IO.userError (mkCompilationErrorMsg result)
     ModelChecker.Concrete.updateCompilationStatus instanceId .succeeded
-    return some buildFolder
+    return buildFolder
 
   /-- Core elaboration logic shared by all model checking modes. -/
   elabModelCheckCore (stx : Syntax) (mode : ModelCheckingMode) (instTerm : Term)
@@ -1057,7 +1058,7 @@ where
 
     let compilationComputation ← Command.wrapAsyncAsSnapshot (fun () => do
       try
-        let some buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId | return
+        let buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
         if ← checkCancelled ctx.cancelToken ctx.instanceId then return
         runBinaryAndLogResult ctx buildFolder sourceFile
       catch e : Exception =>
@@ -1095,7 +1096,7 @@ where
     let compilationCancelTk ← IO.CancelToken.new
     let compilationComputation ← Command.wrapAsyncAsSnapshot (fun () => do
       try
-        let some buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId | return
+        let buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
         -- Skip handoff if violation found or interpreted finished
         if (← ModelChecker.Concrete.isViolationFound ctx.instanceId) || (← IO.hasFinished interpretedTask) then
           ModelChecker.Compilation.markRegistryFinished sourceFile buildFolder
