@@ -84,16 +84,19 @@ structure Progress where
   history : Array ProgressHistoryPoint := #[]
   deriving ToJson, FromJson, Inhabited, Repr
 
-/-- Refs for tracking progress of a single model checker instance. -/
-structure ProgressRefs where
-  progressRef : IO.Ref Progress
-  resultRef : IO.Ref (Option Lean.Json)
-  /-- Cancellation token for this instance. -/
+/-- Mutable state of one run. Terminal publication and handoff share this lock. -/
+structure ProgressState where
+  progress : Progress
+  resultJson : Option Lean.Json := none
   cancelToken : IO.CancelToken
-  /-- Set by compilation task to signal interpreted mode to stop for handoff. -/
-  handoffRequested : IO.Ref Bool
-  /-- Set by interpreted mode when a violation is found (prevents handoff). -/
-  violationFound : IO.Ref Bool
+  handoffRequested : Bool := false
+  violationFound : Bool := false
+  /-- A Stop request remains effective when handoff replaces the worker token. -/
+  cancellationRequested : Bool := false
+
+/-- A lifetime handle retained by active workers and panels. -/
+structure ProgressRefs where
+  state : Std.Mutex ProgressState
 
 /-- Global registry mapping instance IDs to their progress refs.
     This allows passing quotable IDs through syntax while maintaining per-instance state. -/
@@ -121,13 +124,10 @@ def enableCompiledModeProgress : IO Unit := do
 def allocProgressInstance (allActionLabels : List String := []) : IO (Nat × IO.CancelToken) := do
   let id ← nextInstanceId.modifyGet fun n => (n, n + 1)
   let cancelTk ← IO.CancelToken.new
-  let refs : ProgressRefs := {
-    progressRef := ← IO.mkRef { startTimeMs := ← IO.monoMsNow, status := "Running...", isRunning := true, allActionLabels }
-    resultRef := ← IO.mkRef none
+  let refs : ProgressRefs := { state := ← Std.Mutex.new {
+    progress := { startTimeMs := ← IO.monoMsNow, status := "Running...", allActionLabels }
     cancelToken := cancelTk
-    handoffRequested := ← IO.mkRef false
-    violationFound := ← IO.mkRef false
-  }
+  } }
   progressRegistry.modify fun m => m.insert id refs
   return (id, cancelTk)
 
@@ -139,136 +139,180 @@ def getProgressRefs (instanceId : Nat) : IO (Option ProgressRefs) := do
 private def withRefs (instanceId : Nat) (f : ProgressRefs → IO Unit) : IO Unit := do
   if let some refs ← getProgressRefs instanceId then f refs
 
-/-- Update progress for a given instance ID.
-    In compiled mode, also outputs progress to stderr as JSON.
-    Also accumulates history for time-series charting. -/
+/-- Read progress and its result from one publication, including after registry eviction. -/
+def getProgressSnapshot (refs : ProgressRefs) : IO (Progress × Option Lean.Json) :=
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    return (s.progress, s.resultJson)
+
+def getCancelToken (instanceId : Nat) : IO (Option IO.CancelToken) := do
+  let some refs ← getProgressRefs instanceId | return none
+  refs.state.atomically fun ref => return some (← ref.get).cancelToken
+
+/-- Update progress while the run is active. Late worker reports cannot reopen a result. -/
 def updateProgress (instanceId : Nat)
     (diameter statesFound distinctStates queue : Nat)
     (actionStats : List ActionStatDisplay := []) : IO Unit := do
   let now ← IO.monoMsNow
-  -- Update refs if they exist (interpreted mode)
-  if let some refs ← getProgressRefs instanceId then
-    refs.progressRef.modify fun p =>
+  withRefs instanceId fun refs => refs.state.atomically fun ref => do
+    ref.modify fun s =>
+      if !s.progress.isRunning then s else
+      let p := s.progress
       let elapsed := now - p.startTimeMs
       let historyPoint : ProgressHistoryPoint := {
-        timestamp := elapsed, diameter, statesFound, distinctStates, queue
-      }
-      { p with
+        timestamp := elapsed, diameter, statesFound, distinctStates, queue }
+      { s with progress := { p with
         diameter, statesFound, distinctStates, queue, actionStats
-        elapsedMs := elapsed
-        history := p.history.push historyPoint }
-  -- Output to stderr if in compiled mode
+        elapsedMs := elapsed, history := p.history.push historyPoint } }
   if ← compiledModeEnabled.get then
     let startTime ← compiledModeStartTime.get
     let p : Progress := {
-      status := "Running..."
-      diameter, statesFound, distinctStates, queue, actionStats
-      isRunning := true
-      startTimeMs := startTime
-      elapsedMs := now - startTime
-    }
+      status := "Running...", diameter, statesFound, distinctStates, queue, actionStats,
+      startTimeMs := startTime, elapsedMs := now - startTime }
     IO.eprintln (toJson p).compress
 
-/-- Update just the status and elapsed time for a given instance ID. -/
+/-- Accept a compiled progress report without overwriting lifecycle or compiler status. -/
+def updateCompiledProgress (instanceId : Nat) (p : Progress) : IO Unit :=
+  withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
+    if !s.progress.isRunning then s else
+    let old := s.progress
+    let point : ProgressHistoryPoint := {
+      timestamp := p.elapsedMs, diameter := p.diameter, statesFound := p.statesFound,
+      distinctStates := p.distinctStates, queue := p.queue }
+    { s with progress := { old with
+      diameter := p.diameter, statesFound := p.statesFound
+      distinctStates := p.distinctStates, queue := p.queue, actionStats := p.actionStats,
+      elapsedMs := p.elapsedMs, history := old.history.push point } }
+
 def updateStatus (instanceId : Nat) (status : String) : IO Unit := withRefs instanceId fun refs => do
   let now ← IO.monoMsNow
-  refs.progressRef.modify fun p => { p with status, elapsedMs := now - p.startTimeMs }
+  refs.state.atomically fun ref => ref.modify fun s =>
+    if !s.progress.isRunning then s else
+    { s with progress := { s.progress with status, elapsedMs := now - s.progress.startTimeMs } }
 
-/-- Mark progress as complete for a given instance ID. -/
-def finishProgress (instanceId : Nat) (resultJson : Lean.Json) : IO Unit := withRefs instanceId fun refs => do
+/-- Atomically publish the first terminal result. A discovered violation can still win
+    while interpreted execution is stopping for handoff. Returns whether it was accepted. -/
+def publishResult (instanceId : Nat) (resultJson : Lean.Json) : IO Bool := do
+  let some refs ← getProgressRefs instanceId | return false
   let now ← IO.monoMsNow
-  refs.progressRef.modify fun p => { p with status := "Complete", isRunning := false, elapsedMs := now - p.startTimeMs }
-  refs.resultRef.set (some resultJson)
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    let violation := resultJson.getObjValD "result" == .str "found_violation"
+    if !s.progress.isRunning ||
+        (s.handoffRequested && !violation && resultJson.getObjValD "error" == .null) then return false
+    ref.set { s with
+      resultJson := some resultJson, handoffRequested := false
+      progress := { s.progress with
+        status := "Complete", isRunning := false
+        elapsedMs := now - s.progress.startTimeMs } }
+    return true
 
-/-- Get current progress for an instance ID. -/
+def finishProgress (instanceId : Nat) (resultJson : Lean.Json) : IO Unit := do
+  let _ ← publishResult instanceId resultJson
+
+/-- Missing IDs are terminal, so an expired result cannot leave a panel polling forever. -/
 def getProgress (instanceId : Nat) : IO Progress := do
   match ← getProgressRefs instanceId with
-  | some refs => refs.progressRef.get
-  | none => return {}
+  | some refs => return (← getProgressSnapshot refs).1
+  | none => return { status := "Result expired", isRunning := false }
 
-/-- Get result JSON for an instance ID. -/
 def getResultJson (instanceId : Nat) : IO (Option Lean.Json) := do
   match ← getProgressRefs instanceId with
-  | some refs => refs.resultRef.get
+  | some refs => return (← getProgressSnapshot refs).2
   | none => return none
 
-/-- Check if cancellation has been requested for an instance. -/
 def isCancelled (instanceId : Nat) : IO Bool := do
-  match ← getProgressRefs instanceId with
-  | some refs => refs.cancelToken.isSet
-  | none => return false
+  let some refs ← getProgressRefs instanceId | return false
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    return s.cancellationRequested || (← s.cancelToken.isSet)
 
-/-- Request cancellation for an instance. -/
-def requestCancellation (instanceId : Nat) : IO Unit := withRefs instanceId (·.cancelToken.set)
+def requestCancellation (instanceId : Nat) : IO Unit := withRefs instanceId fun refs =>
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    s.cancelToken.set
+    ref.set { s with cancellationRequested := true }
 
-/-- Mark progress as cancelled for a given instance ID. -/
+/-- Cancellation is terminal and cannot replace an already published result. -/
 def cancelProgress (instanceId : Nat) : IO Unit := withRefs instanceId fun refs => do
   let now ← IO.monoMsNow
-  refs.progressRef.modify fun p => { p with
-    status := "Cancelled", isRunning := false, isCancelled := true, elapsedMs := now - p.startTimeMs }
-  refs.resultRef.set (some (Json.mkObj [("result", "cancelled")]))
+  refs.state.atomically fun ref => ref.modify fun s =>
+    if !s.progress.isRunning then s else
+    { s with
+      resultJson := some (Json.mkObj [("result", "cancelled")]), handoffRequested := false
+      progress := { s.progress with
+        status := "Cancelled", isRunning := false
+        isCancelled := true, elapsedMs := now - s.progress.startTimeMs } }
 
-/-- Wait for model check to complete and return the result JSON. -/
 partial def waitForResult (instanceId : Nat) (pollIntervalMs : Nat := 100) : IO (Option Lean.Json) := do
-  loop
+  let some refs ← getProgressRefs instanceId | return none
+  loop refs
 where
-  loop : IO (Option Lean.Json) := do
-    let progress ← getProgress instanceId
+  loop (refs : ProgressRefs) : IO (Option Lean.Json) := do
+    let (progress, result) ← getProgressSnapshot refs
     if progress.isRunning then
-      IO.sleep (pollIntervalMs.toUInt32)
-      loop
-    else
-      getResultJson instanceId
+      IO.sleep pollIntervalMs.toUInt32
+      loop refs
+    else return result
 
 /-! ## Handoff Coordination -/
 
 def updateCompilationStatus (instanceId : Nat) (status : CompilationStatus) : IO Unit :=
-  withRefs instanceId fun refs => refs.progressRef.modify fun p => { p with compilationStatus := status }
+  withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
+    { s with progress := { s.progress with compilationStatus := status } }
 
-/-- Update compilation log with a new line. -/
 def updateCompilationLog (instanceId : Nat) (elapsedMs : Nat) (line : String) (isError : Bool) : IO Unit :=
-  withRefs instanceId fun refs => refs.progressRef.modify fun p =>
-    let existingLines := match p.compilationStatus with | .inProgress _ l => l | _ => #[]
+  withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
+    if !s.progress.isRunning then s else
+    let existingLines := match s.progress.compilationStatus with | .inProgress _ l => l | _ => #[]
     let newLine : CompilationLogLine := { timestamp := elapsedMs, content := line, isError }
-    { p with compilationStatus := .inProgress elapsedMs (existingLines.push newLine) }
+    { s with progress := { s.progress with compilationStatus := .inProgress elapsedMs (existingLines.push newLine) } }
 
-/-- Update just elapsed time without adding a log line. -/
 def updateCompilationElapsed (instanceId : Nat) (elapsedMs : Nat) : IO Unit :=
-  withRefs instanceId fun refs => refs.progressRef.modify fun p =>
-    let lines := match p.compilationStatus with | .inProgress _ l => l | _ => #[]
-    { p with compilationStatus := .inProgress elapsedMs lines }
+  withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
+    if !s.progress.isRunning then s else
+    let lines := match s.progress.compilationStatus with | .inProgress _ l => l | _ => #[]
+    { s with progress := { s.progress with compilationStatus := .inProgress elapsedMs lines } }
 
-def requestHandoff (instanceId : Nat) : IO Unit := withRefs instanceId (·.handoffRequested.set true)
+/-- Claim handoff only while the interpreted request is still eligible. -/
+def requestHandoff (instanceId : Nat) : IO Bool := do
+  let some refs ← getProgressRefs instanceId | return false
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    if !s.progress.isRunning || s.handoffRequested || s.violationFound || s.cancellationRequested || (← s.cancelToken.isSet) then
+      return false
+    ref.set { s with handoffRequested := true }
+    return true
 
 def checkHandoffRequested (instanceId : Nat) : IO Bool := do
-  match ← getProgressRefs instanceId with
-  | some refs => refs.handoffRequested.get
-  | none => return false
+  let some refs ← getProgressRefs instanceId | return false
+  refs.state.atomically fun ref => return (← ref.get).handoffRequested
 
-/-- Check if execution should stop (cancelled or handoff requested). -/
 def shouldStop (cancelToken : IO.CancelToken) (instanceId : Nat) : IO Bool :=
   return (← cancelToken.isSet) || (← checkHandoffRequested instanceId)
 
-def setViolationFound (instanceId : Nat) : IO Unit := withRefs instanceId (·.violationFound.set true)
+def setViolationFound (instanceId : Nat) : IO Unit := withRefs instanceId fun refs =>
+  refs.state.atomically fun ref => ref.modify fun s => { s with violationFound := true }
 
 def isViolationFound (instanceId : Nat) : IO Bool := do
-  match ← getProgressRefs instanceId with
-  | some refs => refs.violationFound.get
-  | none => return false
+  let some refs ← getProgressRefs instanceId | return false
+  refs.state.atomically fun ref => return (← ref.get).violationFound
 
-/-- Reset progress for handoff to compiled mode. Returns new cancel token. -/
+/-- Replace the worker token only if no terminal result or Stop request won the race. -/
 def resetProgressForHandoff (instanceId : Nat) : IO (Option IO.CancelToken) := do
   let some refs ← getProgressRefs instanceId | return none
-  let oldProgress ← refs.progressRef.get
-  refs.handoffRequested.set false
-  let newCancelToken ← IO.CancelToken.new
-  progressRegistry.modify fun m => m.insert instanceId { refs with cancelToken := newCancelToken }
   let now ← IO.monoMsNow
-  refs.progressRef.set {
-    status := "Restarting with compiled binary...", startTimeMs := now,
-    compilationStatus := .succeeded, allActionLabels := oldProgress.allActionLabels
-  }
-  return some newCancelToken
+  refs.state.atomically fun ref => do
+    let s ← ref.get
+    if !s.progress.isRunning || !s.handoffRequested || s.cancellationRequested || s.violationFound then
+      return none
+    let cancelToken ← IO.CancelToken.new
+    ref.set { s with
+      cancelToken, handoffRequested := false, resultJson := none
+      progress := {
+        status := "Restarting with compiled binary...", startTimeMs := now
+        compilationStatus := .succeeded, allActionLabels := s.progress.allActionLabels } }
+    return some cancelToken
 
 section Utilities
 

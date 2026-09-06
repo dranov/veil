@@ -875,12 +875,7 @@ where
       (fun line isError _ => do
         unless isError do return
         match Json.parse line >>= FromJson.fromJson? (α := ModelChecker.Concrete.Progress) with
-        | .ok p => if let some refs ← ModelChecker.Concrete.getProgressRefs instanceId then
-            refs.progressRef.modify fun old =>
-              let historyPoint : ModelChecker.Concrete.ProgressHistoryPoint := {
-                timestamp := p.elapsedMs, diameter := p.diameter, statesFound := p.statesFound,
-                distinctStates := p.distinctStates, queue := p.queue }
-              { p with allActionLabels := old.allActionLabels, history := old.history.push historyPoint }
+        | .ok p => ModelChecker.Concrete.updateCompiledProgress instanceId p
         | .error _ => pure ())
       (do
         if ← ownerCancelToken.isSet then
@@ -899,8 +894,8 @@ where
   elaborateInterpretedComputation (instanceId : Nat) (callExpr : Term)
       (parallelCfg : Option ModelChecker.ParallelConfig) : CommandElabM (IO Lean.Json) := do
     let resultExpr ← `(do
-      let some refs ← Veil.ModelChecker.Concrete.getProgressRefs $(quote instanceId) | pure Lean.Json.null
-      Lean.toJson <$> $callExpr ($(quote parallelCfg)) ($(quote instanceId)) refs.cancelToken)
+      let some cancelToken ← Veil.ModelChecker.Concrete.getCancelToken $(quote instanceId) | pure Lean.Json.null
+      Lean.toJson <$> $callExpr ($(quote parallelCfg)) ($(quote instanceId)) cancelToken)
     trace[veil.desugar] "{resultExpr}"
     liftTermElabM do
       let expr ← Term.elabTerm resultExpr none
@@ -932,14 +927,14 @@ where
   /-- Handle errors in model checking computations. -/
   handleModelCheckError (ctx : ModelCheckContext) (e : Exception) : CommandElabM Unit := do
     let json := errorJson s!"{← e.toMessageData.toString}"
-    logModelCheckResult ctx.stx json
-    ModelChecker.Concrete.finishProgress ctx.instanceId json
+    if ← ModelChecker.Concrete.publishResult ctx.instanceId json then
+      logModelCheckResult ctx.stx json
 
   /-- Finish model checking with a successful result. -/
   finishWithResult (ctx : ModelCheckContext) (json : Json) : CommandElabM Unit := do
     let json := enrichJsonWithAssertions json ctx.assertionSources
-    logModelCheckResult ctx.stx json
-    ModelChecker.Concrete.finishProgress ctx.instanceId json
+    if ← ModelChecker.Concrete.publishResult ctx.instanceId json then
+      logModelCheckResult ctx.stx json
 
   /-- Run the request's binary, releasing its private build directory on every exit. -/
   runBinaryAndLogResult (ctx : ModelCheckContext) (buildFolder : System.FilePath)
@@ -1065,6 +1060,9 @@ where
     let interpretedComputation ← Command.wrapAsyncAsSnapshot (fun () => do
       try
         let json ← IO.ofExcept (← ioComputation.toIO')
+        if json.getObjValD "result" == .str "found_violation" then
+          finishWithResult ctx json
+          return
         match (← ctx.cancelToken.isSet, ← ModelChecker.Concrete.checkHandoffRequested ctx.instanceId) with
         | (true, false) => ModelChecker.Concrete.cancelProgress ctx.instanceId  -- User clicked Stop
         | (false, _) => finishWithResult ctx json
@@ -1086,14 +1084,24 @@ where
           IO.FS.removeDirAll buildFolder
           return
         -- Handoff to compiled binary
-        ModelChecker.Concrete.requestHandoff ctx.instanceId
+        unless ← ModelChecker.Concrete.requestHandoff ctx.instanceId do
+          IO.FS.removeDirAll buildFolder
+          return
         ctx.cancelToken.set
         let _ ← IO.wait interpretedTask
-        let some newCancelToken ← ModelChecker.Concrete.resetProgressForHandoff ctx.instanceId | return
+        let some newCancelToken ← ModelChecker.Concrete.resetProgressForHandoff ctx.instanceId | do
+          ModelChecker.Concrete.cancelProgress ctx.instanceId
+          IO.FS.removeDirAll buildFolder
+          return
         let ctxWithNewToken := { ctx with cancelToken := newCancelToken }
         runBinaryAndLogResult ctxWithNewToken buildFolder compilationCancelTk
       catch e : Exception =>
-        ModelChecker.Concrete.updateCompilationStatus ctx.instanceId (.failed s!"{← e.toMessageData.toString}")
+        let message ← e.toMessageData.toString
+        ModelChecker.Concrete.updateCompilationStatus ctx.instanceId (.failed message)
+        if (← IO.hasFinished interpretedTask) && (← ModelChecker.Concrete.getProgress ctx.instanceId).isRunning then
+          handleModelCheckError ctx e
+        else
+          logWarningAt ctx.stx m!"Compiled acceleration failed; retaining interpreted execution: {message}"
     ) compilationCancelTk
     let compilationTask ← BaseIO.asTask (compilationComputation ()) (prio := .dedicated)
     Command.logSnapshotTask { stx? := none, cancelTk? := compilationCancelTk, task := compilationTask }
