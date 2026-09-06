@@ -89,7 +89,12 @@ theorem IteratedProd.subtypesToList_foldl_eq_list_foldl {α : Type u} {β : Type
     simp [IteratedProd.foldl, IteratedProd.foldr, subtypesToList, ← h]
     grind
 
-/-- A thin wrapper around `IO.asTask` to produce an `IteratedProd` of `Task`s. -/
+/-- Run a single chunk directly; spawn tasks only when work can run in parallel.
+The completed task preserves the common result/proof plumbing in the caller. -/
 def IteratedProd.taskSplit {β : α → Type} [Monad m] [MonadLiftT BaseIO m] [MonadLiftT IO m]
   (as : List α) (f : (a : α) → a ∈ as → IO (β a)) : m (IteratedProd <| as.map fun a => (Task (Except IO.Error <| β a))) := do
-  IteratedProd.ofListMWithMem (as := as) fun subArr h_subArr_in => IO.asTask (f subArr h_subArr_in)
+  IteratedProd.ofListMWithMem (as := as) fun subArr h_subArr_in => do
+    if as.tail.isEmpty then
+      return Task.pure (.ok (← f subArr h_subArr_in))
+    else
+      IO.asTask (f subArr h_subArr_in)

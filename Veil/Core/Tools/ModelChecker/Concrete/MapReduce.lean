@@ -602,10 +602,10 @@ def breadthFirstSearchParallel {m : Type → Type}
         boundaryResult := some boundary
         trySetViolationFound progressInstanceId boundary
         break
-      -- FIXME: Need to add a proper sequential fallback if the frontier is too small
-      -- Split the queue into sub-lists; fall back to 1 split (sequential) if frontier is too small
-      let numSplits := if tovisitLen < parallelCfg.thresholdToParallel then 1
-                       else max 1 parallelCfg.numSubTasks
+      -- Reuse the normalized worker count and avoid empty chunks. A single
+      -- chunk runs directly through taskSplit without spawning another task.
+      let numSplits := min tovisitLen
+        (if tovisitLen < parallelCfg.thresholdToParallel then 1 else numShards)
       let chunkSize := tovisitLen / numSplits
       let numLarge := tovisitLen % numSplits
       let splitLists := ListSplit.splitList numSplits chunkSize numLarge tovisit
