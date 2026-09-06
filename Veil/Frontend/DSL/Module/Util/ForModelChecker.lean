@@ -58,13 +58,22 @@ def getBuildBaseDir : IO System.FilePath := do
   let pwd ← IO.currentDir
   return pwd / ".lake" / "model_checker_builds"
 
-/-- Generate a build folder name based on the source file name, so that for the
-same source file we get the same build folder. -/
+initialize nextBuildId : IO.Ref Nat ← IO.mkRef 0
+
+/-- Reserve a fresh build directory for this request. Exclusive creation also prevents
+collisions between Lean processes or reused process IDs; no active build is overwritten. -/
 def generateBuildFolderName (sourceFile : String) : IO System.FilePath := do
-  -- Use the source file's stem (filename without extension) for readability
-  let stem := System.FilePath.mk sourceFile |>.fileStem.getD "unrecognized_model"
+  let stem := System.FilePath.mk sourceFile |>.fileStem.getD "model"
   let baseDir ← getBuildBaseDir
-  return baseDir / stem
+  IO.FS.createDirAll baseDir
+  repeat
+    let id ← nextBuildId.modifyGet fun n => (n, n + 1)
+    let path := baseDir / s!"{stem}_{← IO.Process.getPID}_{id}"
+    try
+      IO.FS.createDir path
+      return path
+    catch e =>
+      unless ← path.pathExists do throw e
 
 /-- Template for the `lakefile.lean` in the temp project. Note that it does
 not only require the parent Veil project, but also *all the dependencies*;
