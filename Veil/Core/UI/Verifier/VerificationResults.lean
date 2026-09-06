@@ -25,6 +25,8 @@ structure VerificationResultsProps where
   optionInsertPos : Option Lsp.Position
   /-- Document URI for edit operations. -/
   documentUri : String
+  /-- Fingerprint of the source that supplied insertion anchors. -/
+  insertionSourceHash : String
 deriving Server.RpcEncodable
 
 
@@ -37,6 +39,20 @@ end ProofWidgets
 namespace Veil.Verifier
 
 open Lean Elab Command ProofWidgets RefreshComponent
+
+structure InsertionDocument where
+  uri : String
+  version : Nat
+deriving Server.RpcEncodable
+
+/-- Validate old widget anchors against the current document before a versioned edit. -/
+@[server_rpc_method]
+def insertionDocument (expectedSourceHash : String) :
+    Server.RequestM (Server.RequestTask InsertionDocument) := Server.RequestM.asTask do
+  let doc ← Server.RequestM.readDoc
+  unless toString (hash doc.meta.text.source) == expectedSourceHash do
+    throwThe Server.RequestError ⟨.invalidParams, "The document changed. Refresh verification results before inserting a theorem or option."⟩
+  return { uri := doc.meta.uri, version := doc.meta.version }
 
 inductive StreamingStatus where
   | running
@@ -53,11 +69,9 @@ private def displayWidget (atStx : Syntax) (html : Html) : CommandElabM Unit := 
 private def getTheoremInsertInfo (atStx : Syntax) : CommandElabM (Lsp.Position × String) := do
   let fileMap ← getFileMap
   let docUri := (← getFileName)
-  -- Get position at end of the syntax, then move to start of next line
-  let some tailPos := atStx.getTailPos? | return ({ line := 0, character := 0 }, docUri)
-  let pos := fileMap.toPosition tailPos
-  -- Insert at the start of the line after the command
-  let insertPos : Lsp.Position := { line := pos.line, character := 0 }
+  -- Insert exactly at the command tail, including commands ending at EOF.
+  let some tailPos := atStx.getTailPos? | throwError "Missing insertion anchor"
+  let insertPos := fileMap.utf8PosToLspPos tailPos
   return (insertPos, docUri)
 
 def displayResults (atStx : Syntax) (results : VerificationResults VCMetadata SmtResult) : CommandElabM Unit := do
@@ -66,7 +80,8 @@ def displayResults (atStx : Syntax) (results : VerificationResults VCMetadata Sm
     results,
     theoremInsertPos,
     optionInsertPos := none,
-    documentUri
+    documentUri,
+    insertionSourceHash := toString (hash (← getFileMap).source)
   } #[]
   displayWidget atStx html
 
@@ -80,7 +95,7 @@ private def getOptionInsertPos? (atStx : Syntax) : CommandElabM (Option Lsp.Posi
   return some { line := pos.line - 1, character := 0 }
 
 private partial def runStreamingResults (theoremInsertPos : Lsp.Position)
-    (optionInsertPos : Option Lsp.Position) (documentUri : String)
+    (optionInsertPos : Option Lsp.Position) (documentUri : String) (insertionSourceHash : String)
     (getter : CoreM (VerificationResults VCMetadata SmtResult × StreamingStatus))
     (token : RefreshToken) : CoreM Unit := do
   -- CAREFUL: do not sleep while holding the lock
@@ -90,11 +105,12 @@ private partial def runStreamingResults (theoremInsertPos : Lsp.Position)
     results,
     theoremInsertPos,
     optionInsertPos,
-    documentUri
+    documentUri,
+    insertionSourceHash
   } #[]
   token.update html
   match status with
-  | .running => runStreamingResults theoremInsertPos optionInsertPos documentUri getter token
+  | .running => runStreamingResults theoremInsertPos optionInsertPos documentUri insertionSourceHash getter token
   | .done => pure ()
 
 def displayStreamingResults (atStx : Syntax)
@@ -102,8 +118,9 @@ def displayStreamingResults (atStx : Syntax)
     (optionStx? : Option Syntax := none) : CommandElabM Unit := do
   let (theoremInsertPos, documentUri) ← getTheoremInsertInfo atStx
   let optionInsertPos ← optionStx?.mapM getOptionInsertPos? <&> Option.join
+  let insertionSourceHash := toString (hash (← getFileMap).source)
   let html ← liftCoreM <| ProofWidgets.mkRefreshComponentM (.text "Loading...")
-    (runStreamingResults theoremInsertPos optionInsertPos documentUri getter)
+    (runStreamingResults theoremInsertPos optionInsertPos documentUri insertionSourceHash getter)
   displayWidget atStx html
 
 /-- Map VCStatus to emoji for text output. -/

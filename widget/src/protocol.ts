@@ -107,5 +107,6 @@ export interface VerificationResultsProps {
   optionInsertPos?: InsertPosition | null;
   /** Document URI for edit operations */
   documentUri: string;
+  insertionSourceHash: string;
 }
 

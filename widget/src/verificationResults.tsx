@@ -1,6 +1,6 @@
 import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
-import { EditorContext } from '@leanprover/infoview';
+import { InsertionSourceContext, useEditorInsertion } from './editorInsertion';
 import HtmlDisplay, { Html } from './htmlDisplay';
 import {
   ChangeInfo,
@@ -359,80 +359,15 @@ const TRUST_RECONSTRUCTION_OPTION = 'set_option veil.smt.trust false';
 
 // ========== Editor Insertion ==========
 
-/** Hook to create a theorem inserter function */
-const useTheoremInserter = (documentUri: string, theoremInsertPos: InsertPosition) => {
-  const editorCtx = React.useContext(EditorContext);
 
-  const insertTheorem = React.useCallback(async (theoremText: string) => {
-    if (!editorCtx) {
-      console.error('EditorContext not available');
-      return false;
-    }
-    try {
-      const edit = {
-        textDocument: { uri: documentUri, version: null },
-        edits: [{
-          range: {
-            start: { line: theoremInsertPos.line, character: theoremInsertPos.character },
-            end: { line: theoremInsertPos.line, character: theoremInsertPos.character }
-          },
-          newText: '\n\n' + theoremText
-        }]
-      };
-      await editorCtx.api.applyEdit({ documentChanges: [edit] });
-      return true;
-    } catch (e) {
-      console.error('Failed to insert theorem:', e);
-      return false;
-    }
-  }, [editorCtx, documentUri, theoremInsertPos]);
-
-  return insertTheorem;
-};
-
-/** Hook to insert `set_option veil.smt.trust false` above `#gen_spec`. */
-const useTrustOptionInserter = (documentUri: string, optionInsertPos?: InsertPosition | null) => {
-  const editorCtx = React.useContext(EditorContext);
-
-  const insertOption = React.useCallback(async () => {
-    if (!editorCtx) {
-      console.error('EditorContext not available');
-      return false;
-    }
-    if (!optionInsertPos) {
-      console.error('Option insertion position not available');
-      return false;
-    }
-    try {
-      const edit = {
-        textDocument: { uri: documentUri, version: null },
-        edits: [{
-          range: {
-            start: { line: optionInsertPos.line, character: optionInsertPos.character },
-            end: { line: optionInsertPos.line, character: optionInsertPos.character }
-          },
-          newText: `${TRUST_RECONSTRUCTION_OPTION}\n`
-        }]
-      };
-      await editorCtx.api.applyEdit({ documentChanges: [edit] });
-      return true;
-    } catch (e) {
-      console.error('Failed to insert option:', e);
-      return false;
-    }
-  }, [editorCtx, documentUri, optionInsertPos]);
-
-  return insertOption;
-};
 
 /** Banner shown when there are VCs that need manual proof (unknown/error status) */
 const ManualProofBanner: React.FC<{
   vcs: VerificationCondition[];
   alternativeMap: Map<number, VerificationCondition[]>;
-  documentUri: string;
   theoremInsertPos: InsertPosition;
-}> = ({ vcs, alternativeMap, documentUri, theoremInsertPos }) => {
-  const insertTheorem = useTheoremInserter(documentUri, theoremInsertPos);
+}> = ({ vcs, alternativeMap, theoremInsertPos }) => {
+  const {insert: insertTheorem, error: insertionError} = useEditorInsertion(theoremInsertPos);
   const [inserting, setInserting] = React.useState(false);
   const [dismissed, setDismissed] = React.useState(false);
 
@@ -457,6 +392,7 @@ const ManualProofBanner: React.FC<{
 
   return (
     <div className="vr-failure-banner">
+      {insertionError}
       <span className="vr-failure-banner-icon">⚠️</span>
       <span className="vr-failure-banner-text">
         {count} verification condition{count !== 1 ? 's' : ''} could not be discharged automatically
@@ -482,10 +418,10 @@ const ManualProofBanner: React.FC<{
 /** Banner shown when one or more VCs were proven by trusting the SMT solver. */
 const TrustedSmtBanner: React.FC<{
   vcs: VerificationCondition[];
-  documentUri: string;
   optionInsertPos?: InsertPosition | null;
-}> = ({ vcs, documentUri, optionInsertPos }) => {
-  const insertTrustOption = useTrustOptionInserter(documentUri, optionInsertPos);
+}> = ({ vcs, optionInsertPos }) => {
+  const {insert: insertOption, error: insertionError} = useEditorInsertion(optionInsertPos);
+  const insertTrustOption = () => insertOption(TRUST_RECONSTRUCTION_OPTION);
   const [inserting, setInserting] = React.useState(false);
   const alternatives = buildAlternativeMap(vcs);
   const count = filterToVisibleVCs(vcs).filter(vc => {
@@ -506,6 +442,7 @@ const TrustedSmtBanner: React.FC<{
       className="vr-trusted-smt-banner"
       title="These goals were discharged with a trusted SMT result; no Lean proof was reconstructed. `set_option veil.smt.trust false` to enable proof reconstruction."
     >
+      {insertionError}
       <span className="vr-trusted-smt-banner-icon">⚠️</span>
       <span className="vr-trusted-smt-banner-text">
         Trusting SMT solver for {count} goal{count === 1 ? '' : 's'}.{' '}
@@ -672,12 +609,11 @@ function getFilterButtonContent(filter: StatusFilter): React.ReactNode {
 interface PropertyRowProps {
   vc: VerificationCondition;
   alternatives?: VerificationCondition[];
-  documentUri: string;
   theoremInsertPos: InsertPosition;
   serverTime: number;
 }
 
-const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], documentUri, theoremInsertPos, serverTime }) => {
+const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], theoremInsertPos, serverTime }) => {
   const [expanded, setExpanded] = React.useState(false);
   const [selectedCounterexampleId, setSelectedCounterexampleId] = React.useState<number>();
   const [showRawHtml, setShowRawHtml] = React.useState(false);
@@ -691,7 +627,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], docume
   const selected = counterexamples.find(c => c.vc.id === selectedCounterexampleId)
     ?? counterexamples.find(c => getInductionData(c.vc)?.style === 'tr') ?? counterexamples[0];
   const activeCounterexample = selected?.counterexample;
-  const insertTheorem = useTheoremInserter(documentUri, theoremInsertPos);
+  const {insert: insertTheorem, error: insertionError} = useEditorInsertion(theoremInsertPos);
   const needsManualProof = isManualProofStatus(effectiveStatus);
   const hasTheoremText = !!vc.theoremText;
   const alternativeTheorems = alternatives.filter(v => v.theoremText);
@@ -764,6 +700,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], docume
 
   return (
     <>
+      {insertionError}
       <div
         className={`property-row status-${getStatusClass(effectiveStatus)} ${isExpandable ? 'expandable' : ''} ${needsManualProof && hasTheoremText ? 'insertable' : ''}`}
         onClick={handleRowClick}
@@ -872,14 +809,13 @@ interface ActionSectionProps {
   action: string;
   vcs: VerificationCondition[];
   alternativeMap: Map<number, VerificationCondition[]>;
-  documentUri: string;
   theoremInsertPos: InsertPosition;
   serverTime: number;
 }
 
-const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeMap, documentUri, theoremInsertPos, serverTime }) => {
+const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeMap, theoremInsertPos, serverTime }) => {
   const [expanded, setExpanded] = React.useState(true);
-  const insertTheorem = useTheoremInserter(documentUri, theoremInsertPos);
+  const {insert: insertTheorem, error: insertionError} = useEditorInsertion(theoremInsertPos);
   const [inserting, setInserting] = React.useState(false);
 
   // Get VCs that need manual proof (unknown/error/timeout, not disproven - those have counterexamples)
@@ -903,6 +839,7 @@ const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeM
 
   return (
     <div className="action-section">
+      {insertionError}
       <div className="action-header" onClick={() => setExpanded(!expanded)}>
         <span className="action-toggle">{expanded ? '▼' : '▶'}</span>
         <span className="action-name">{action}</span>
@@ -925,7 +862,6 @@ const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeM
             <PropertyRow
               key={vc.id}
               vc={vc}
-              documentUri={documentUri}
               theoremInsertPos={theoremInsertPos}
               alternatives={alternativeMap.get(vc.id)}
               serverTime={serverTime}
@@ -937,7 +873,7 @@ const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeM
   );
 };
 
-const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, theoremInsertPos, optionInsertPos, documentUri }) => {
+const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, theoremInsertPos, optionInsertPos }) => {
   const [statusFilter, setStatusFilter] = React.useState<StatusFilter>('all');
   const [showRawJson, setShowRawJson] = React.useState(false);
 
@@ -1905,7 +1841,6 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
 
             <TrustedSmtBanner
               vcs={results.vcs}
-              documentUri={documentUri}
               optionInsertPos={optionInsertPos}
             />
 
@@ -1913,7 +1848,6 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
             <ManualProofBanner
               vcs={visibleVCs}
               alternativeMap={alternativeMap}
-              documentUri={documentUri}
               theoremInsertPos={theoremInsertPos}
             />
 
@@ -1934,7 +1868,6 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
                             key={vc.id}
                             vc={vc}
                             alternatives={alternativeMap.get(vc.id)}
-                            documentUri={documentUri}
                             theoremInsertPos={theoremInsertPos}
                             serverTime={results.serverTime}
                           />
@@ -1957,7 +1890,6 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
                           action={action}
                           vcs={vcs}
                           alternativeMap={alternativeMap}
-                          documentUri={documentUri}
                           theoremInsertPos={theoremInsertPos}
                           serverTime={results.serverTime}
                         />
@@ -1974,4 +1906,6 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
   );
 };
 
-export default VerificationResultsView;
+export default function VerificationResultsWidget(props: VerificationResultsProps) {
+  return <InsertionSourceContext.Provider value={props.insertionSourceHash}><VerificationResultsView {...props} /></InsertionSourceContext.Provider>;
+}
