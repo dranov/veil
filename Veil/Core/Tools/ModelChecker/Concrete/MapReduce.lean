@@ -556,6 +556,8 @@ def breadthFirstSearchParallel {m : Type → Type}
   (progressInstanceId : Nat)
   (cancelToken : IO.CancelToken) :
   m (MapReduceSearchContextMain σ κ σₕ asm) := do
+  unless parallelCfg.numSubSteps == 1 do
+    IO.ofExcept <| .error <| IO.userError "Parallel model checking does not support numSubSteps other than 1"
   let numShards := max 1 <| min parallelCfg.numSubTasks 4294967295
   have ⟨h_pos, h_small⟩ := not_too_small_not_too_large parallelCfg.numSubTasks
   let mut mctx : LawfulMapReduceSearchContextMain (fp := fp) sys params :=
