@@ -182,9 +182,6 @@ const StructuredCexView: React.FC<{
     return Array.from(names).sort();
   }, [preState, postState]);
 
-  // Compute diff from preState to postState
-  const changes = postState ? diffChanges(preState, postState) : new Map<string, ChangeInfo>();
-
   // Filter fields based on hiddenFields
   const filteredPreState = React.useMemo(() => {
     const filtered: Record<string, unknown> = {};
@@ -202,6 +199,8 @@ const StructuredCexView: React.FC<{
     }
     return filtered;
   }, [postState, hiddenFields]);
+
+  const changes = React.useMemo(() => filteredPostState ? diffChanges(filteredPreState, filteredPostState) : new Map<string, ChangeInfo>(), [filteredPreState, filteredPostState]);
 
   // Filter changes to only include visible fields, and optionally hide removals
   const filteredChanges = React.useMemo(() => {
@@ -1799,7 +1798,7 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
 
   `, [statusColors]);
 
-  const prettyJson = JSON.stringify(results, null, 2);
+  const prettyJson = React.useMemo(() => showRawJson ? JSON.stringify(results, null, 2) : '', [showRawJson, results]);
 
   return (
     <>

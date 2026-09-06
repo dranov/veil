@@ -201,13 +201,13 @@ const KVRow: React.FC<{
 const StateCard: React.FC<{
   st: ParsedState;
   highlighted?: boolean;
-  changes?: Map<string, ChangeInfo>;
+  previousFields?: Record<string, unknown>;
   showRemovals?: boolean;
   forceOpen?: boolean | null;  // null means use local state, true/false forces open/closed
   hiddenFields?: Set<string>;
   onHideField?: (fieldName: string) => void;
   onResetForceOpen?: () => void;  // Called when user clicks header while forceOpen is active
-}> = ({ st, highlighted = false, changes, showRemovals = false, forceOpen = null, hiddenFields, onHideField, onResetForceOpen }) => {
+}> = ({ st, highlighted = false, previousFields, showRemovals = false, forceOpen = null, hiddenFields, onHideField, onResetForceOpen }) => {
   const isFailing = st.failing === true;
   const [localOpen, setLocalOpen] = React.useState(true);
 
@@ -221,6 +221,12 @@ const StateCard: React.FC<{
 
   // Use forceOpen if set, otherwise use local state
   const open = forceOpen !== null ? forceOpen : localOpen;
+  const changes = React.useMemo(() => {
+    if (!open) return new Map<string, ChangeInfo>();
+    const visible = Object.fromEntries(Object.entries(st.fields).filter(([key]) => !hiddenFields?.has(key)));
+    const previous = previousFields && Object.fromEntries(Object.entries(previousFields).filter(([key]) => !hiddenFields?.has(key)));
+    return diffChanges(previous, visible);
+  }, [open, st.fields, previousFields, hiddenFields]);
 
   const handleHeaderClick = () => {
     if (forceOpen !== null && onResetForceOpen) {
@@ -697,10 +703,11 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
     }
   `;
 
-  const prettyJson = JSON.stringify(result, null, 2);
+  const prettyJson = React.useMemo(() => showRawJson ? JSON.stringify(result, null, 2) : '', [showRawJson, result]);
 
   // Extract trace and theory from results (works for all result types)
-  const trace = traceData ? traceDataToStates(traceData) : [];
+  const trace = React.useMemo(() => traceData ? traceDataToStates(traceData) : [], [traceData]);
+  const [visibleStateCount, setVisibleStateCount] = React.useState(100);
 
   // Merge theory with extraVals that have '.' in their names
   const { combinedTheory, remainingExtraVals } = React.useMemo(() => {
@@ -785,10 +792,9 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
             {trace.length > 0 ? (
               <>
                 <div className={`mc-trace ${isVertical ? "vertical" : "horizontal"}`}>
-                  {trace.map((s: ParsedState, idx: number) => {
+                  {trace.slice(0, visibleStateCount).map((s: ParsedState, idx: number) => {
                     const prev = idx > 0 ? trace[idx - 1].fields : undefined;
-                    const changes = diffChanges(prev, s.fields);
-                    return <StateCard key={s.index} st={s} changes={changes} showRemovals={showRemovals} forceOpen={allStatesOpen} hiddenFields={hiddenFields} onHideField={toggleFieldVisibility} onResetForceOpen={() => setAllStatesOpen(null)} />;
+                    return <StateCard key={s.index} st={s} previousFields={prev} showRemovals={showRemovals} forceOpen={allStatesOpen} hiddenFields={hiddenFields} onHideField={toggleFieldVisibility} onResetForceOpen={() => setAllStatesOpen(null)} />;
                   })}
                 </div>
 
@@ -797,6 +803,7 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
                 )}
 
                 <div className="mc-summary">
+                  {visibleStateCount < trace.length && <button onClick={() => setVisibleStateCount(count => count + 100)}>Show next {Math.min(100, trace.length - visibleStateCount)} states</button>}
                   <strong>Summary:</strong> {trace.length} states in trace
                 </div>
               </>
