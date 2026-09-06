@@ -229,8 +229,10 @@ scoped syntax (name := initializerDefinition) kw_after_init "{" doSeq "}" : comm
 access to the state variables. The post-state can be referred to with primed
 variable names, e.g. `initial_msg'`.
 
-Every variable that is not mentioned with its primed name is assumed to
-be unchanged.
+Every field whose primed binding is not referenced by the elaborated body is
+assumed to be unchanged. Macro expansion and lexical scope determine which
+field is referenced: a local variable with the same name does not count.
+References count even in unused `let` bindings, before simplification.
 
 Example:
 

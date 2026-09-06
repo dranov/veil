@@ -249,8 +249,8 @@ Actions can themselves be called from other actions and procedures.
 
 Besides imperative `action`s, transitions can be defined directly as two-state
 relations via the `transition` keyword, with the post-state accessed through
-primed variables. Any field not mentioned in primed form is implicitly framed
-(assumed unchanged):
+primed variables. Any field whose primed binding is not referenced in the body
+is implicitly framed (assumed unchanged):
 
 ```lean
 transition byz {
@@ -259,6 +259,13 @@ transition byz {
     (is_byz src ∧ (initial_msg src dst r v → initial_msg' src dst r v))
 }
 ```
+
+References are resolved after macro expansion and respect lexical scope. A
+macro that uses `x'` can modify the field `x`, while a local binding such as
+`let x' := false; x' = false` does not refer to the post-state field and leaves
+`x` framed. References count before simplification: even `let _ := x'; True`
+permits `x` to change. Immutable fields have no post-state binding and cannot
+be modified by a transition.
 
 The imperative style is generally preferable — it tends to be more readable and
 has significantly better execution performance for model checking — but the

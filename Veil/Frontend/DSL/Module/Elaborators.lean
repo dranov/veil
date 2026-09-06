@@ -4,6 +4,7 @@ import Veil.Base
 import Veil.Frontend.DSL.Module.Syntax
 import Veil.Frontend.DSL.Infra.EnvExtensions
 import Veil.Frontend.DSL.Module.Util
+import Veil.Frontend.DSL.Module.Util.TransitionFraming
 import Veil.Frontend.DSL.Action.Elaborators
 import Veil.Frontend.DSL.State.SubState
 import Veil.Frontend.DSL.State.ConcreteRegistry
@@ -510,22 +511,12 @@ def elabTransition : CommandElab := fun stx => do
     mod.throwIfSpecAlreadyFinalized
     let new_mod ← match stx with
     | `(command|transition $nm:ident $br:explicitBinders ? { $t:term }) =>
-      -- check immutability of changed fields
-      let changedFn (f : Name) := t.raw.find? (·.getId == f.appendAfter "'") |>.isSome
-      let fields ← mod.getFieldsRecursively
-      for f in fields.filter changedFn do
-        mod.throwIfImmutable f (isTransition := true)
-      -- Only mutable fields need "unchanged" constraints
-      -- (immutable fields don't have primed versions in transitions)
-      let mutableFieldNames := mod.mutableComponents.map (·.name)
-      let unchangedFields := mutableFieldNames.filter (!changedFn ·)
       -- obtain the "real" transition term
       let trStx ← do
         let (th, st, st') := (mkIdent `th, mkIdent `st, mkIdent `st')
-        let unchangedFields := unchangedFields.map Lean.mkIdent
         let tmp ← liftTermElabM <| mod.withTheoryAndStateTermTemplate [(.theory, th, true), (.state .none "conc", st, true), (.state "'" "conc'", st', true)]
           (some $ ← `(term|Prop))
-          (fun _ _ => `([unchanged|"'"| $unchangedFields*] ∧ ($t)))
+          (fun _ _ => `(veil_framed_transition% ($t)))
         -- NOTE: We wrap the transition in a `decide` to ensure the required `Decidable` instance
         -- becomes an instance argument and can be used in extraction
         `(term| (fun ($th : $environmentTheory) ($st $st' : $environmentState) => $(mkIdent ``decide) ($tmp) = $(mkIdent ``true)))
