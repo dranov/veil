@@ -81,6 +81,12 @@ register_option veil.violationIsError : Bool := {
   logged as errors. If false, they are logged as info messages."
 }
 
+/-- Select the final request while replaying earlier commands in compiled sources. -/
+register_option veil.__modelCheckCompileTarget : Bool := {
+  defValue := true
+  descr := "Internal: whether a model-check command is the compiled entry point"
+}
+
 register_option veil.__modelCheckCompileMode : Bool := {
   defValue := false
   descr := "(INTERNAL ONLY. DO NOT USE.) When true, skip verification-only operations for model checking compilation."

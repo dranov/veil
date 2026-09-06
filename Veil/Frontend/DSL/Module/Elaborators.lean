@@ -705,6 +705,7 @@ elab_rules : command
 
 @[command_elab Veil.modelCheck]
 def elabModelCheck : CommandElab := fun stx => do
+  if (← isModelCheckCompileMode) && !veil.__modelCheckCompileTarget.get (← getOptions) then return
   -- Use dynamic trace class name for detailed profiling
   withTraceNode `veil.perf.elaborator.modelCheck (fun _ => return "#model_check") do
     -- stx[1] is the optional mode, stx[2] is instTerm, stx[3] is optional theory,
@@ -730,33 +731,14 @@ where
           #model_check {instTerm} {theoryExample}"
       `({})
 
-  /-- Generate the model source for compilation:
-      1. Insert `set_option veil.__modelCheckCompileMode true` after imports
-      2. Keep everything up to the point where the spec was finalized
-      3. Append the current `#model_check` command
-      This filters out `#check_invariants`, `sat trace`, etc. from the compiled model. -/
-  generateModelSource (mod : Module) (stx : Syntax) : CommandElabM String := do
+  /-- Keep the elaboration prefix, suppressing previous checks in compile mode. -/
+  generateModelSource (_mod : Module) (stx : Syntax) : CommandElabM String := do
     let src := (← getFileMap).source
-    let afterImportsPos := ModelChecker.Compilation.findPosAfterImports src
-    let compileModePreamble := "\nset_option veil.__modelCheckCompileMode true\n"
-    -- Use the stored syntax where spec was finalized
-    let some specFinalizedAtStx := mod.specFinalizedAtStx
-      | throwError "Internal error: spec should be finalized before generating model source"
     let some modelCheckStart := stx.getPos? | throwError "Unexpected error: #model_check has no position"
-    -- Strip the optional `assumptions_hold_by` clause (stx[5]) from compiled source,
-    -- since the proof is not needed (and may reference unavailable definitions).
+    -- The original command already checked this proof; native execution does not need it.
     let some modelCheckEnd := (if stx[5].isNone then stx.getTailPos? else stx[5].getPos?)
-      | throwError (if stx[5].isNone then "Unexpected error: #model_check has no end position" else "Unexpected error: assumptions_hold_by has no position")
-    -- If #model_check itself triggered finalization, use its start position to avoid duplication.
-    -- Otherwise, use the tail position of the finalizing command (e.g., #gen_spec, #check_invariants).
-    let modelCheckTriggeredFinalization := specFinalizedAtStx.getPos? == stx.getPos?
-    let specFinalizedAtPos := if modelCheckTriggeredFinalization
-      then modelCheckStart
-      else specFinalizedAtStx.getTailPos?.getD modelCheckStart
-    let beforeImports := String.Pos.Raw.extract src 0 afterImportsPos
-    let afterImportsToSpecFinalized := String.Pos.Raw.extract src afterImportsPos specFinalizedAtPos
-    let modelCheckCmd := String.Pos.Raw.extract src modelCheckStart modelCheckEnd
-    return beforeImports ++ compileModePreamble ++ afterImportsToSpecFinalized ++ "\n" ++ modelCheckCmd ++ "\n"
+      | throwError "Unexpected error: #model_check has no end position"
+    ModelChecker.Compilation.generateModelSourcePrefix src modelCheckStart modelCheckEnd
 
   /-- Prepend `name` with `mod.name`. Useful when expressions are printed out for debugging. -/
   mkIdentWithModName (mod : Module) (name : Name) : Ident :=

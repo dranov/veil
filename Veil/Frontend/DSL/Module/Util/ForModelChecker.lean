@@ -4,14 +4,21 @@ namespace Veil.ModelChecker.Compilation
 
 open Lean Meta Elab Command
 
-/-- Find the byte position right after all `import` statements in a source string.
-    Used to insert `set_option` commands after imports during model compilation. -/
-def findPosAfterImports (src : String) : String.Pos.Raw :=
-  let lines := src.splitOn "\n"
-  let (_, lastImportEnd) := lines.foldl (init := ((0 : Nat), (0 : Nat))) fun (pos, lastImportEnd) line =>
-    let nextPos := pos + line.utf8ByteSize + 1  -- +1 for newline
-    (nextPos, if line.trimAsciiStart.startsWith "import " then nextPos else lastImportEnd)
-  ⟨lastImportEnd⟩
+/-- Parse Lean's module header, including comments and all supported import forms. -/
+def findPosAfterImports (src : String) : IO String.Pos.Raw := do
+  let (_, state, messages) ← Parser.parseHeader (Parser.mkInputContext src "Model.lean")
+  if messages.hasErrors then throw <| IO.userError "Cannot parse the compiled model's imports"
+  return state.pos
+
+/-- Replay the entire command prefix. Earlier model checks are suppressed by an option,
+while declarations, local instances, options, and namespace commands remain intact. -/
+def generateModelSourcePrefix (src : String) (commandStart commandEnd : String.Pos.Raw) : IO String := do
+  let afterImports ← findPosAfterImports src
+  let preamble := "\nset_option veil.__modelCheckCompileMode true\nset_option veil.__modelCheckCompileTarget false\n"
+  return String.Pos.Raw.extract src 0 afterImports ++ preamble ++
+    String.Pos.Raw.extract src afterImports commandStart ++
+    "\nset_option veil.__modelCheckCompileTarget true\n" ++
+    String.Pos.Raw.extract src commandStart commandEnd ++ "\n"
 
 /-- Status of the model checker compilation process for a single model. -/
 inductive Status
