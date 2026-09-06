@@ -74,6 +74,10 @@ lean_exe ModelCheckerMain where
   buildType := .relWithDebInfo
 "
 
+/-- Preserve every parallel setting when crossing the executable boundary. -/
+def compiledArguments (config : Option ModelChecker.ParallelConfig) : Array String :=
+  config.map (fun p => #[s!"{p.numSubTasks}", s!"{p.thresholdToParallel}", s!"{p.numSubSteps}"]) |>.getD #[]
+
 /-- Template for the ModelCheckerMain.lean in the temp project.
     Takes the namespace of the specification to open scoped instances. -/
 def modelCheckerMainTemplate (specNamespace : String) : String :=

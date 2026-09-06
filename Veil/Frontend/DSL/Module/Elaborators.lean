@@ -868,7 +868,7 @@ where
       (assertionSources : Std.HashMap AssertionId AssertionSourceInfo)
       (ownerCancelToken : IO.CancelToken) : IO Bool := do
     ModelChecker.Concrete.updateStatus instanceId "Running compiled binary..."
-    let args := parallelCfg.map (fun p => #[s!"{p.numSubTasks}", s!"{p.thresholdToParallel}"]) |>.getD #[]
+    let args := ModelChecker.Compilation.compiledArguments parallelCfg
     let result ← ModelChecker.Compilation.runProcessWithStatusCallback
       { cmd := toString (binPath / "ModelCheckerMain"), args }
       (fun _ => pure ())
