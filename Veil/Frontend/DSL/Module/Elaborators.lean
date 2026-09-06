@@ -1014,6 +1014,8 @@ where
       | true, _ => pure none
       | false, some cfg => pure (some cfg)
       | false, none => pure (some { numSubTasks := ← getNumCores, thresholdToParallel := defaultThresholdToParallel })
+    if let some cfg := parallelCfg then
+      if let .error message := cfg.validate then throwError "{message}"
     let config := { config with parallelCfg := parallelCfg }
     let callExpr ← mkModelCheckerCall mod config instTerm theoryTerm
 

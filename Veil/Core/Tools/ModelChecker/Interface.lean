@@ -129,6 +129,11 @@ structure ParallelConfig where
   numSubSteps : Nat := 1
 deriving Inhabited, Repr
 
+/-- Validate supported configuration before either interpreted or compiled execution. -/
+def ParallelConfig.validate (cfg : ParallelConfig) : Except String Unit :=
+  if cfg.numSubSteps == 1 then .ok ()
+  else .error "Parallel model checking does not support numSubSteps other than 1"
+
 instance ParallelConfig.hasQuote : Quote ParallelConfig `term where
   quote cfg :=
     Syntax.mkCApp ``ParallelConfig.mk
