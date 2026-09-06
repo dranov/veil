@@ -73,10 +73,18 @@ def SequentialSearchContext.processState
     }
     SequentialSearchContext.processSuccessors fpSt depth successfulTransitions (ctx'', sq)
 
+/-- Compute the next expansion once, sharing it between validation and BFS. -/
+def SequentialSearchContext.nextOutcomes
+    (outcomesComputer : ρ → σ → List (κ × ExecutionOutcome ℤ σ))
+    (sctx : SequentialSearchContext σ κ σₕ asm) : List (κ × ExecutionOutcome ℤ σ) :=
+  match sctx.2.dequeue? with
+  | none => []
+  | some (item, _) => outcomesComputer th item.state
+
 /-- Perform one step of BFS. -/
 -- @[inline, specialize]
 def SequentialSearchContext.bfsStep
-  (outcomesComputer : ρ → σ → List (κ × ExecutionOutcome ℤ σ))
+  (outcomes : List (κ × ExecutionOutcome ℤ σ))
   (sctx : SequentialSearchContext σ κ σₕ asm) : SequentialSearchContext σ κ σₕ asm :=
   let (ctx, sq) := sctx
   match sq.dequeue? with
@@ -92,7 +100,7 @@ def SequentialSearchContext.bfsStep
         (ctx.completedDepth, ctx.currentFrontierDepth)
     -- Process curr: add successors to seen, enqueue them, and dequeue curr
     -- processState handles the complete lifecycle of processing a state
-    SequentialSearchContext.processState params th fpSt depth curr (outcomesComputer th curr)
+    SequentialSearchContext.processState params th fpSt depth curr outcomes
       (ctx, q_tail) newCompletedDepth newFrontierDepth
 
 theorem SequentialSearchContext.processSuccessors_preserves_invs
@@ -150,10 +158,10 @@ theorem SequentialSearchContext.bfsStep_preserves_invs
   {sctx : SequentialSearchContext σ κ σₕ asm}
   (h_not_finished : sctx.1.hasFinished = false)
   (sctx_invs : SequentialSearchContextInvariants sys params .none sctx) :
-  SequentialSearchContextInvariants sys params .none (sctx.bfsStep params th sys.tr) := by
+  SequentialSearchContextInvariants sys params .none (sctx.bfsStep params th (sctx.nextOutcomes th sys.tr)) := by
   rcases sctx with ⟨ctx, sq⟩ ; rcases sctx_invs with ⟨⟨h_q_sound, h_vis_sound⟩, h_init_incl, h_q_emp, h_closed⟩ ; dsimp only at * ; simp at h_q_sound
   simp [BaseSearchContext.hasFinished] at h_not_finished
-  unfold SequentialSearchContext.bfsStep ; dsimp only
+  unfold SequentialSearchContext.bfsStep SequentialSearchContext.nextOutcomes ; dsimp only
   rcases h_deq : sq.dequeue? with _ | ⟨⟨fpSt, curr, depth⟩, q_tail⟩ <;> dsimp only
   on_goal 1=>
     -- easy case
@@ -206,6 +214,7 @@ def breadthFirstSearchSequential {m : Type → Type}
   (progressInstanceId : Nat)
   (cancelToken : IO.CancelToken) :
   m (SequentialSearchContext σ κ σₕ asm) := do
+  for st in sys.initStates do params.checkState st
   let mut sctx : LawfulSequentialSearchContext (fp := fp) sys params :=
     Subtype.mk (SequentialSearchContext.initial sys) (SequentialSearchContextInvariants.initial sys params)
   let mut lastUpdateTime : Nat := 0
@@ -214,7 +223,9 @@ def breadthFirstSearchSequential {m : Type → Type}
     let sctx_val := sctx.val
     let h_sctx := sctx.property
     let oldFrontierDepth := sctx_val.1.currentFrontierDepth
-    let sctx' := sctx_val.bfsStep params th sys.tr
+    let outcomes := sctx_val.nextOutcomes th sys.tr
+    params.checkOutcomes outcomes
+    let sctx' := sctx_val.bfsStep params th outcomes
     let h_sctx' : SequentialSearchContextInvariants sys params .none sctx' :=
       SequentialSearchContext.bfsStep_preserves_invs params th h_not_finished h_sctx
     match heq : sctx' with

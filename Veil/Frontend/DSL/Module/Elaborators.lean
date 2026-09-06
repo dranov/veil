@@ -781,6 +781,13 @@ where
       `($(mkIdent ``Veil.ModelChecker.SafetyProperty.mk)
           ($(mkIdent `name) := $(quote sa.name))
           ($(mkIdent `property) := fun $(mkIdent `th) $(mkIdent `st) => $(mkIdentWithModName mod sa.name) $(mkIdent `th) $(mkIdent `st)))
+    let state := mkVeilImplementationDetailIdent `state
+    let checks ← mod.mutableComponents.mapM fun field =>
+      `($(mkIdent ``Veil.checkModelCheckRepresentation) $(quote field.name.toString)
+        ($state.$(mkIdent field.name)))
+    let validation ← checks.foldrM (init := ← `($(mkIdent ``Option.none))) fun check rest =>
+      `($check <|> $rest)
+    let validateState ← `(fun $state => $validation)
     let assumptionList ← `([$((← mod.assumptions.mapM mkAssumption)),*])
     let safetyList ← `([$((← mod.invariants.mapM mkProp)),*])
     -- FIXME: Only recognizing the first termination property might confuse users
@@ -794,7 +801,7 @@ where
                     $(mkIdent ``Veil.ModelChecker.EarlyTerminationCondition.deadlockOccurred)])
       if config.maxDepth > 0 then `($base ++ [$(mkIdent ``Veil.ModelChecker.EarlyTerminationCondition.reachedDepthBound) $(quote config.maxDepth)])
       else pure base
-    `({ $(mkIdent `assumptions):ident := $assumptionList, $(mkIdent `invariants):ident := $safetyList, $(mkIdent `terminating):ident := $terminatingProp,
+    `({ $(mkIdent `validateState):ident := $validateState, $(mkIdent `assumptions):ident := $assumptionList, $(mkIdent `invariants):ident := $safetyList, $(mkIdent `terminating):ident := $terminatingProp,
         $(mkIdent `stateConstraints):ident := $constraintList,
         $(mkIdent `earlyTerminationConditions):ident := $earlyTermConds })
 

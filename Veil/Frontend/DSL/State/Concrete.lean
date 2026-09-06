@@ -106,6 +106,51 @@ instance [Repr (CanonicalFieldWrapper FieldDomain FieldCodomain)] [Repr α] :
     | HybridFieldType.canonical cf, prec => Repr.reprPrec cf prec
     | HybridFieldType.concrete fc, prec => Repr.reprPrec fc prec
 
+/-- Runtime check for opaque state fields whose identity cannot be computed.
+The DSL adapter uses this check for generated fields. Custom state types that
+contain opaque representations should provide an instance that checks their
+components; this is not a proof of arbitrary user-defined hashing laws. -/
+class ModelCheckRepresentation (α : Type u) where
+  isRepresentable : α → Bool
+
+instance (priority := low) : ModelCheckRepresentation α := ⟨fun _ => true⟩
+
+instance : ModelCheckRepresentation (CanonicalFieldWrapper domain codomain) :=
+  ⟨fun _ => false⟩
+
+instance [ModelCheckRepresentation α] :
+    ModelCheckRepresentation (HybridFieldType α domain codomain) where
+  isRepresentable
+    | .canonical _ => false
+    | .concrete value => ModelCheckRepresentation.isRepresentable value
+
+instance [ModelCheckRepresentation α] : ModelCheckRepresentation (List α) :=
+  ⟨fun values => values.all ModelCheckRepresentation.isRepresentable⟩
+
+instance [ModelCheckRepresentation α] : ModelCheckRepresentation (Array α) :=
+  ⟨fun values => values.all ModelCheckRepresentation.isRepresentable⟩
+
+instance [ModelCheckRepresentation α] : ModelCheckRepresentation (Option α) :=
+  ⟨fun value => value.all ModelCheckRepresentation.isRepresentable⟩
+
+instance [ModelCheckRepresentation α] [ModelCheckRepresentation β] :
+    ModelCheckRepresentation (α × β) :=
+  ⟨fun value => ModelCheckRepresentation.isRepresentable value.1 &&
+    ModelCheckRepresentation.isRepresentable value.2⟩
+
+instance [ModelCheckRepresentation α] [ModelCheckRepresentation β] :
+    ModelCheckRepresentation (Sum α β) :=
+  ⟨fun value => value.elim ModelCheckRepresentation.isRepresentable
+    ModelCheckRepresentation.isRepresentable⟩
+
+/-- Include the field name in the diagnostic produced by `#model_check`. -/
+def checkModelCheckRepresentation [ModelCheckRepresentation α]
+    (field : String) (value : α) : Option String :=
+  if ModelCheckRepresentation.isRepresentable value then none else
+    some s!"Cannot model check: state field '{field}' cannot be fully represented. \
+      An assignment over a non-enumerable domain produced an opaque function, \
+      so distinct states cannot be distinguished. Use a finite domain or finite point updates."
+
 -- For `Inhabited`, only provide for the `concrete` case
 instance [Inhabited α] : Inhabited (HybridFieldType α FieldDomain FieldCodomain) :=
   ⟨HybridFieldType.concrete default⟩

@@ -249,6 +249,11 @@ def ParallelConfig.taskSplit (cfg : ParallelConfig) (f : Array α → IO β) (wo
 
 
 structure SearchParameters (ρ σ : Type) where
+  /-- Reject unrepresentable states before computing fingerprints. The generated
+  DSL adapter supplies this check; custom API callers must validate any opaque
+  representations in their own state type. -/
+  validateState : σ → Option String := fun _ => none
+
   /-- Assumptions that the concrete theory supplied to the model checker must
   satisfy before any state exploration is meaningful. -/
   assumptions : List (TheoryProperty ρ) := []
@@ -269,6 +274,18 @@ structure SearchParameters (ρ σ : Type) where
   /-- Stop the search if _any_ of the stopping conditions are met. Of course,
   the search also terminates if all reachable states have been explored. -/
   earlyTerminationConditions : List EarlyTerminationCondition
+
+/-- Validate every generated state before it can be discarded as a duplicate. -/
+def SearchParameters.checkState (params : SearchParameters ρ σ) (st : σ) : IO Unit := do
+  if let some message := params.validateState st then
+    throw (IO.userError message)
+
+def SearchParameters.checkOutcomes (params : SearchParameters ρ σ)
+    (outcomes : List (κ × ExecutionOutcome Int σ)) : IO Unit := do
+  for (_, outcome) in outcomes do
+    match outcome with
+    | .success st | .assertionFailure _ st => params.checkState st
+    | .divergence => pure ()
 
 /-- Check if a state satisfies all state constraints. -/
 def SearchParameters.satisfiesConstraints (params : SearchParameters ρ σ) (th : ρ) (st : σ) : Bool :=

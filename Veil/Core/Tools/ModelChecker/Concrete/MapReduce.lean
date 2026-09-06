@@ -201,6 +201,7 @@ private theorem processWorkQueue.subproof6 {α : Type u} {l : List α} :
 -- Then the proof about the invariant can be extrinsic.
 
 def processWorkQueue
+  [Monad m] [MonadLiftT IO m]
   {params : SearchParameters ρ σ} {th : ρ}
   {sys : EnumerableTransitionSystem ρ (List ρ) σ (List σ) ℤ κ (List (κ × ExecutionOutcome ℤ σ)) th}
   {globalSeen : ShardedTreeSetUSize σₕ}
@@ -208,16 +209,19 @@ def processWorkQueue
   {p q : MapReduceQueueItem σₕ σ → Prop} (h : ∀ x, q x ↔ p x ∨ x ∈ queue)
   (h_inqueue_reachable : ∀ item ∈ queue, sys.reachable item.state)
   (lctx : LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen p) :
-    LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen q :=
+    m (LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen q) :=
   let ⟨v, hl⟩ := lctx
   match queue with
-  | [] => ⟨v, (processWorkQueue.subproof1 h) ▸ hl⟩
+  | [] => pure ⟨v, (processWorkQueue.subproof1 h) ▸ hl⟩
   | item :: rest =>
     if h_finished : v.hasFinished
-    then ⟨v, hl.finished_change_visited_pred_in_invs h_finished⟩
-    else
-      let ⟨fpSt, curr⟩ := item
-      let v' := v.processState globalSeen params th fpSt curr (sys.tr th curr)
+    then pure ⟨v, hl.finished_change_visited_pred_in_invs h_finished⟩
+    else do
+      let fpSt := item.fingerprint
+      let curr := item.state
+      let outcomes := sys.tr th curr
+      params.checkOutcomes outcomes
+      let v' := v.processState globalSeen params th fpSt curr outcomes
       -- CHECK Is this proper tail-recursive?
       processWorkQueue rest
         (processWorkQueue.subproof2 h)
@@ -239,8 +243,7 @@ def bfsBigStep
   m (LawfulMapReduceSearchContextLocal (κ := κ) sys params globalSeen (· ∈ queue)) :=
   let lctx : LawfulMapReduceSearchContextLocal sys params globalSeen (fun _ => False) :=
     ⟨MapReduceSearchContextLocal.initial completedDepth, MapReduceSearchContextLocalInvariants.initial sys params globalSeen completedDepth⟩
-  let res := lctx.processWorkQueue queue processWorkQueue.subproof6 h_inqueue_reachable
-  pure res
+  lctx.processWorkQueue queue processWorkQueue.subproof6 h_inqueue_reachable
 
 end LawfulMapReduceSearchContextLocal
 
@@ -551,6 +554,7 @@ def breadthFirstSearchParallel {m : Type → Type}
   (progressInstanceId : Nat)
   (cancelToken : IO.CancelToken) :
   m (MapReduceSearchContextMain σ κ σₕ asm) := do
+  for st in sys.initStates do params.checkState st
   let numShards := max 1 <| min parallelCfg.numSubTasks 4294967295
   have ⟨h_pos, h_small⟩ := not_too_small_not_too_large parallelCfg.numSubTasks
   let mut mctx : LawfulMapReduceSearchContextMain (fp := fp) sys params :=

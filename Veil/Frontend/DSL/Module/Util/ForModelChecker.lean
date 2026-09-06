@@ -129,10 +129,16 @@ def main (args : List String) : IO Unit := do
   -- Instance ID is not used in compiled mode, pass 0
   -- Cancel token is created locally; cancellation is handled by killing the process from outside
   let cancelTk ← IO.CancelToken.new
-  let res ← modelCheckerResult pcfg 0 cancelTk
-  IO.println s!\"{Lean.toJson res}\"
-  flushStdoutAndStderr
-  IO.Process.forceExit 0
+  try
+    let res ← modelCheckerResult pcfg 0 cancelTk
+    IO.println s!\"{Lean.toJson res}\"
+    flushStdoutAndStderr
+    IO.Process.forceExit 0
+  catch error =>
+    -- The stdin watchdog otherwise keeps the process alive after an exception.
+    IO.eprintln error.toString
+    flushStdoutAndStderr
+    IO.Process.forceExit 1
 "
 
 /-- Create the temp build folder with all necessary files.
