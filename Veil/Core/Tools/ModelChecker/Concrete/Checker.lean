@@ -90,6 +90,11 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
   unless assumptionViolations.isEmpty do
     setViolationFound progressInstanceId
     return ModelCheckingResult.foundViolation 0 (.assumptionFailure assumptionViolations) none
+  -- Initialization failures precede exploration and cannot be hidden by a state
+  -- constraint or by a successful sibling branch of the initializer.
+  if let (exceptionId, state) :: _ := sys.initFailures then
+    setViolationFound progressInstanceId
+    return .initializationFailure exceptionId th state
   -- Restrict exploration while preserving original transition enabledness.
   -- In the restricted graph a boundary state may have no successors even though
   -- its original actions are enabled. Permit that boundary to stop exploration.

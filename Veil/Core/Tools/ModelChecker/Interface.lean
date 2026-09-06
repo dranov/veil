@@ -93,6 +93,8 @@ inductive ModelCheckingResult (ρ σ κ σₕ : Type) where
   | foundViolation (fp : σₕ) (violation : ViolationKind) (viaTrace : Option (Trace ρ σ κ))
   | noViolationFound (exploredStates : Nat) (terminationReason : TerminationReason σₕ)
   | cancelled
+  /-- An initializer failed before a valid initial state was established. -/
+  | initializationFailure (exceptionId : Int) (theory : ρ) (state : σ)
 deriving Inhabited, Repr
 
 instance [ToJson ρ] [ToJson σ] [ToJson κ] [ToJson σₕ] : ToJson (ModelCheckingResult ρ σ κ σₕ) where
@@ -107,6 +109,11 @@ instance [ToJson ρ] [ToJson σ] [ToJson κ] [ToJson σₕ] : ToJson (ModelCheck
           ("explored_states", toJson exploredStates),
           ("termination_reason", toJson reason) ]
     | .cancelled => Json.mkObj [("result", "cancelled")]
+    | .initializationFailure exId theory state => Json.mkObj
+        [ ("result", "found_violation"),
+          ("violation", Json.mkObj [("kind", "initialization_failure"), ("exception_id", toJson exId)]),
+          ("trace", Json.null),
+          ("initialization", Json.mkObj [("theory", toJson theory), ("state", toJson state)]) ]
 
 structure ParallelConfig where
   /-- Number of sub-tasks to split the worklist into. -/

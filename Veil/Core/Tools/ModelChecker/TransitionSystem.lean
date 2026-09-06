@@ -91,6 +91,9 @@ structure EnumerableTransitionSystem
   /-- The (enumerable) set of transition labels and execution outcomes.
   Each outcome may be a successful post-state, an assertion failure, or divergence. -/
   tr : ρ → σ → outcomeSet
+  /-- Assertion failures encountered while initializing, including branches that
+  failed alongside successful initial states. These are not reachable states. -/
+  initFailures : List (ε × σ) := []
 
 attribute [grind] EnumerableTransitionSystem.initStates EnumerableTransitionSystem.tr
 

@@ -462,13 +462,14 @@ def Module.assembleEnumerableTransitionSystem [Monad m] [MonadQuotation m] [Mona
     let (th, st) := (mkVeilImplementationDetailIdent `th, mkVeilImplementationDetailIdent `st)
     let (label, next) := (mkVeilImplementationDetailIdent `label, mkVeilImplementationDetailIdent `next)
     let lbls := mkVeilImplementationDetailIdent `lbls
-    let filterMap ← `($(mkIdent ``List.filterMap) $(mkIdent ``id))
+    let initOutcomes := mkVeilImplementationDetailIdent `initOutcomes
 
-    -- NOTE: Use the `ext` version of `initializer` below!!!
-    `({
-      $(mkIdent `initStates):ident :=
-        let $CInit := $(mkIdent <| toExtractedName <| toExtName initializerName) $theoryStx $stateStx $(← mod.uninterpretedParamIdents)*
-        $(mkIdent ``extractValidStates) $CInit $theoryId $(mkIdent ``default) |> $filterMap
+    -- Evaluate the initializer once and preserve both successful and failing branches.
+    `(let $CInit := $(mkIdent <| toExtractedName <| toExtName initializerName) $theoryStx $stateStx $(← mod.uninterpretedParamIdents)*
+      let $initOutcomes := $(mkIdent ``extractAllOutcomes) $CInit $theoryId $(mkIdent ``default)
+      {
+      $(mkIdent `initStates):ident := $(mkIdent ``List.filterMap) $(mkIdent ``ExecutionOutcome.getSuccessState?) $initOutcomes
+      $(mkIdent `initFailures):ident := $(mkIdent ``List.filterMap) $(mkIdent ``ExecutionOutcome.getAssertionFailure?) $initOutcomes
       $(mkIdent `tr):ident := let $lbls := (@$(mkIdent ``Veil.Enumeration.allValues) _ $labelsId) ; fun $th $st =>
         let $CNext := $(mkIdent <| toExtractedName assembledNextActName) $theoryStx $stateStx $(← mod.uninterpretedParamIdents)*
         $(mkIdent ``List.flatMap) (fun ($label : $labelStx) =>
