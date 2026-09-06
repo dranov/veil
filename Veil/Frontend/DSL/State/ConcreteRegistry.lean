@@ -89,9 +89,10 @@ def extTreeMapConfig : ConcreteRepConfig := {
   domainTypeInstances := #[``Ord]
   codomainTypeInstances := #[]
   domainFieldRepInstances := #[``DecidableEq, ``Enumeration, ``Ord, ``Std.TransOrd]
-  codomainFieldRepInstances := #[``Inhabited]
+  -- Non-enumerable domains use finite support and erase default-valued entries.
+  codomainFieldRepInstances := #[``Inhabited, ``DecidableEq]
   domainLawfulFieldRepInstances := #[``DecidableEq, ``Enumeration, ``Ord, ``Std.TransOrd, ``Std.LawfulEqOrd]
-  codomainLawfulFieldRepInstances := #[``Inhabited]
+  codomainLawfulFieldRepInstances := #[``Inhabited, ``DecidableEq]
   fieldRepInstance := ``instFinmapLikeAsFieldRep
   lawfulFieldRepInstance := ``instFinmapLikeLawfulFieldRep
 }

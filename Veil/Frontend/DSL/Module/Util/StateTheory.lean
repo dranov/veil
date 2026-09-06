@@ -456,7 +456,7 @@ private def Module.declareFieldDispatchers [Monad m] [MonadQuotation m] [MonadEx
         `(term| $(mkIdent ``Veil.CanonicalField) $domainGetter $codomainGetter)
       else
         let allSomeCase ← `(term| $(mkIdent repConfigs.relationConfig.typeName) $mapKeyTerm)
-        let notNecessarilyFiniteCase ← `($(mkIdent ``Veil.NotNecessarilyFinmapLikeUpdates.HybridFinmapLike) ($allSomeCase) ($domainGetter) ($codomainGetter))
+        let notNecessarilyFiniteCase ← `($(mkIdent ``Veil.NotNecessarilyFinmapLikeUpdates.HybridFinmapLike) ($mapKeyTerm) ($domainGetter) ($codomainGetter))
         chooseFieldConcreteTypeByEnumAllSomeCheck stateLabelCtor allSomeCase notNecessarilyFiniteCase
     | .function =>
       if repConfigs.functionConfig.kind == .canonical then
@@ -464,14 +464,18 @@ private def Module.declareFieldDispatchers [Monad m] [MonadQuotation m] [MonadEx
         `(term| $(mkIdent ``Veil.CanonicalField) $domainGetter $codomainGetter)
       else
         let allSomeCase ← `(term| $(mkIdent repConfigs.functionConfig.typeName) $mapKeyTerm $mapValueTerm)
-        let notNecessarilyFiniteCase ← `($(mkIdent ``Veil.NotNecessarilyFinmapLikeUpdates.HybridFinmapLike) ($allSomeCase) ($domainGetter) ($codomainGetter))
+        let notNecessarilyFiniteCase ← `($(mkIdent ``Veil.NotNecessarilyFinmapLikeUpdates.HybridFinmapLike) ($mapKeyTerm) ($domainGetter) ($codomainGetter))
         chooseFieldConcreteTypeByEnumAllSomeCheck stateLabelCtor allSomeCase notNecessarilyFiniteCase
     | .module => throwError "[fieldKindToConcreteType] module kind is not supported"
   /-- Choose between two concrete field types based on whether the domain is
   finite or not. -/
   chooseFieldConcreteTypeByEnumAllSomeCheck (stateLabelCtor allSomeCase notNecessarilyFiniteCase : Term) : m Term := do
-    let body ← `(term| bif $instEnumerationForIteratedProdAllSomeCheck $stateLabelCtor then $allSomeCase else $notNecessarilyFiniteCase)
-    `(veil_dsimp% [$instEnumerationForIteratedProdAllSomeCheck, $(mkIdent ``cond)] ($body))
+    -- Select before elaborating either representation: an unused finite-support
+    -- branch must not require Ord from array/bit-vector configurations.
+    let choice ← `(veil_dsimp% [$instEnumerationForIteratedProdAllSomeCheck, $(mkIdent ``cond)]
+      (bif $instEnumerationForIteratedProdAllSomeCheck $stateLabelCtor
+        then $(mkIdent ``Option.some) () else $(mkIdent ``Option.none)))
+    `(meta_match_option $choice => (fun _ => $allSomeCase) => $notNecessarilyFiniteCase)
 
 /-! ## Instance Lifting Infrastructure (Private) -/
 

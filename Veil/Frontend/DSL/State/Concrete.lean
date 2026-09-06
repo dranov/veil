@@ -66,11 +66,59 @@ instance [inst : FinEncodable α] : Membership α (ArrayAsFinset α) where
 
 end FinmapLike
 
+/-- A total function with a constant default and finitely many exceptions.
+The map is ordered, and insertion removes entries equal to the default. -/
+structure FiniteSupportMap (α β : Type) [Ord α] where
+  defaultValue : β
+  entries : Std.ExtTreeMap α β := {}
+
+namespace FiniteSupportMap
+variable [Ord α] [Std.TransOrd α]
+
+instance [Inhabited β] : Inhabited (FiniteSupportMap α β) := ⟨⟨default, {}⟩⟩
+
+def get (f : FiniteSupportMap α β) (key : α) : β :=
+  f.entries.getD key f.defaultValue
+
+def insert [DecidableEq β] (key : α) (value : β) (f : FiniteSupportMap α β) :
+    FiniteSupportMap α β :=
+  { f with entries := if value = f.defaultValue then f.entries.erase key
+      else f.entries.insert key value }
+
+instance [DecidableEq β] : FinmapLike α β (FiniteSupportMap α β) := ⟨get, insert⟩
+
+instance [DecidableEq α] [DecidableEq β] [Std.LawfulEqOrd α] :
+    LawfulFinmapLike (FiniteSupportMap α β) where
+  insert_get key key' value f := by
+    dsimp [FinmapLike.get, FinmapLike.insert, get, insert]
+    by_cases h : value = f.defaultValue <;>
+      simp [h, Std.ExtTreeMap.getD_erase, Std.ExtTreeMap.getD_insert]
+
+instance [BEq β] : BEq (FiniteSupportMap α β) where
+  beq a b := a.defaultValue == b.defaultValue && a.entries == b.entries
+
+instance [Std.LawfulEqOrd α] [BEq β] [LawfulBEq β] :
+    LawfulBEq (FiniteSupportMap α β) where
+  rfl := by
+    intro a
+    change (a.defaultValue == a.defaultValue && a.entries == a.entries) = true
+    simp
+  eq_of_beq := by
+    intro a b h
+    change (a.defaultValue == b.defaultValue && a.entries == b.entries) = true at h
+    simp only [Bool.and_eq_true, beq_iff_eq] at h
+    cases a; cases b; simp_all
+
+instance [Hashable α] [Hashable β] : Hashable (FiniteSupportMap α β) where
+  hash f := f.entries.foldl (fun acc key value => mixHash acc (mixHash (hash key) (hash value)))
+    (hash f.defaultValue)
+
+end FiniteSupportMap
+
 section ConcreteUpdates
 
-/-- A wrapper around `CanonicalField` to indicate that this field is used
-as part of a hybrid finset-like representation. It might have special
-`BEq` and `Hashable` instances. -/
+/-- Opaque fallback for assignments without finite support. The model checker
+must reject this branch before computing state identity. -/
 structure CanonicalFieldWrapper (FieldDomain : List Type) (FieldCodomain : Type) where
   inner : CanonicalField FieldDomain FieldCodomain
 
@@ -143,6 +191,13 @@ instance [ModelCheckRepresentation α] [ModelCheckRepresentation β] :
   ⟨fun value => value.elim ModelCheckRepresentation.isRepresentable
     ModelCheckRepresentation.isRepresentable⟩
 
+instance [Ord α] [Std.TransOrd α] [ModelCheckRepresentation α] [ModelCheckRepresentation β] :
+    ModelCheckRepresentation (FiniteSupportMap α β) :=
+  ⟨fun value => value.entries.foldl
+    (fun valid key entry => valid && ModelCheckRepresentation.isRepresentable key &&
+      ModelCheckRepresentation.isRepresentable entry)
+    (ModelCheckRepresentation.isRepresentable value.defaultValue)⟩
+
 /-- Include the field name in the diagnostic produced by `#model_check`. -/
 def checkModelCheckRepresentation [ModelCheckRepresentation α]
     (field : String) (value : α) : Option String :=
@@ -168,15 +223,15 @@ def FieldRepresentation.FinmapLike.get (fc : γ) : CanonicalField FieldDomain Fi
   IteratedArrow.curry (inst.get fc ∘ equiv)
 
 def FieldRepresentation.FinmapLike.setSingle'Core
-  (v : CanonicalField FieldDomain FieldCodomain) (fc : γ)
+  (v : FieldUpdateValue FieldDomain FieldCodomain) (fc : γ)
   (footprint : IteratedProd (FieldDomain.map (fun {ty} => Unit → List ty))) :=
-  let vv := v.uncurry
+  let vv := v.toCanonical.uncurry
   IteratedProd.foldMap fc (IteratedArrow.curry fun arg fc' =>
     inst.insert (equiv arg) (vv arg) fc') footprint
 
 def FieldRepresentation.FinmapLike.setSingle'
   (fa : FieldUpdatePat FieldDomain)
-  (v : CanonicalField FieldDomain FieldCodomain) (fc : γ) :=
+  (v : FieldUpdateValue FieldDomain FieldCodomain) (fc : γ) :=
   delta% FieldRepresentation.FinmapLike.setSingle'Core equiv v fc (fa.footprintRaw instfin)
 
 @[implicit_reducible]
@@ -187,7 +242,7 @@ def instFinmapLikeAsFieldRep : FieldRepresentation FieldDomain FieldCodomain γ 
 
 theorem FieldRepresentation.FinmapLike.get_set_for_validFootprint
   (dec : IteratedProd (List.map DecidableEq FieldDomain)) (fc : γ)
-  (fa : FieldUpdatePat FieldDomain) (v : CanonicalField FieldDomain FieldCodomain)
+  (fa : FieldUpdatePat FieldDomain) (v : FieldUpdateValue FieldDomain FieldCodomain)
   (footprint : _) (h : fa.validFootprint footprint) :
   get equiv (setSingle'Core equiv v fc footprint) =
     CanonicalField.set dec [(fa, v)] (get equiv fc) := by classical
@@ -200,7 +255,7 @@ theorem FieldRepresentation.FinmapLike.get_set_for_validFootprint
   rw [List.foldl_eq_foldr_reverse]
   conv => enter [2, 1] ; rw [← List.mem_reverse]
   generalize footprint.cartesianProduct.reverse = prods
-  generalize (v.uncurry) = vv
+  generalize (v.toCanonical.uncurry) = vv
   induction prods with
   | nil => simp
   | cons p prods ih => simp [ite_or, ← ih, instl.insert_get] ; grind
@@ -221,24 +276,29 @@ namespace NotNecessarilyFinmapLikeUpdates
 
 variable {FieldDomain : List Type} {FieldCodomain : Type}
   [instd : DecidableEq α]
-  [inst : FinmapLike α FieldCodomain γ]
-  [instl : LawfulFinmapLike γ]
+  [Ord α] [Std.TransOrd α] [DecidableEq FieldCodomain]
+  [instl : LawfulFinmapLike (FiniteSupportMap α FieldCodomain)]
   (equiv : IteratedProd FieldDomain ≃ α)
   (instfin : IteratedProd (FieldDomain.map (OptionalTC ∘ Enumeration)))
   (instdeceq : IteratedProd (FieldDomain.map DecidableEq))
 
-abbrev HybridFinmapLike (γ) (FieldDomain : List Type) (FieldCodomain : Type) :=
-  HybridFieldType γ FieldDomain FieldCodomain
+abbrev HybridFinmapLike (α) (FieldDomain : List Type) (FieldCodomain : Type) [Ord α] :=
+  HybridFieldType (FiniteSupportMap α FieldCodomain) FieldDomain FieldCodomain
 
-def HybridFinmapLike.get : HybridFinmapLike γ FieldDomain FieldCodomain → CanonicalField FieldDomain FieldCodomain
+def HybridFinmapLike.get : HybridFinmapLike α FieldDomain FieldCodomain → CanonicalField FieldDomain FieldCodomain
   | .canonical cf => cf.inner
   | .concrete fc => delta% FieldRepresentation.FinmapLike.get equiv fc
 
 def HybridFinmapLike.setSingle
   (fa : FieldUpdatePat FieldDomain)
-  (v : CanonicalField FieldDomain FieldCodomain) (fc : HybridFinmapLike γ FieldDomain FieldCodomain)
-  : HybridFinmapLike γ FieldDomain FieldCodomain :=
-  match fc with
+  (v : FieldUpdateValue FieldDomain FieldCodomain) (fc : HybridFinmapLike α FieldDomain FieldCodomain)
+  : HybridFinmapLike α FieldDomain FieldCodomain :=
+  match v with
+  | .constant value =>
+    if fa.isAll then .concrete ⟨value, {}⟩ else update
+  | .function _ => update
+where
+  update := match fc with
   | .canonical cf => .canonical <| CanonicalFieldWrapper.mk <| CanonicalField.set instdeceq [(fa, v)] cf.inner
   | .concrete fc' =>
     match fa.footprintRestricted instfin with
@@ -249,29 +309,49 @@ def HybridFinmapLike.setSingle
 
 @[implicit_reducible]
 def instHybridFinmapLikeAsFieldRep : FieldRepresentation FieldDomain FieldCodomain
-  (HybridFinmapLike γ FieldDomain FieldCodomain) :=
+  (HybridFinmapLike α FieldDomain FieldCodomain) :=
   FieldRepresentation.mkFromSingleSet
     (get := HybridFinmapLike.get equiv)
     (setSingle := HybridFinmapLike.setSingle equiv instfin instdeceq)
 
 instance instHybridFinmapLikeLawfulFieldRep : LawfulFieldRepresentation FieldDomain FieldCodomain
-    (HybridFinmapLike γ FieldDomain FieldCodomain)
+    (HybridFinmapLike α FieldDomain FieldCodomain)
     -- TODO this is awkward; synthesis fails here
     (instHybridFinmapLikeAsFieldRep equiv instfin instdeceq) where
   toLawfulFieldRepresentationSet :=
     LawfulFieldRepresentationSet.mkFromSingleSet ..
-  get_set_idempotent := by open Classical in
-    introv ; rcases fav with ⟨fa, v⟩
-    simp +unfoldPartialApp +instances [instHybridFinmapLikeAsFieldRep, FieldRepresentation.mkFromSingleSet,
-      FieldRepresentation.set, HybridFinmapLike.setSingle,
-      HybridFinmapLike.get]
-    rcases fc with cf | fc <;> dsimp only
-    · congr ; apply IteratedProd.map_DecidableEq_eq
-    · rcases h : FieldUpdatePat.footprintRestricted instfin fa with _ | footprint <;> dsimp only
-      · congr ; apply IteratedProd.map_DecidableEq_eq
-      · apply FieldRepresentation.FinmapLike.get_set_for_validFootprint
-        apply FieldUpdatePat.footprintRestricted_valid
-        apply h
+  get_set_idempotent := by
+    intro dec fc ⟨fa, v⟩
+    change HybridFinmapLike.get equiv (HybridFinmapLike.setSingle equiv instfin instdeceq fa v fc) =
+      CanonicalField.set dec [(fa, v)] (HybridFinmapLike.get equiv fc)
+    have fallback : HybridFinmapLike.get equiv
+        (HybridFinmapLike.setSingle.update equiv instfin instdeceq fa v fc) =
+        CanonicalField.set dec [(fa, v)] (HybridFinmapLike.get equiv fc) := by
+      cases fc with
+      | canonical cf =>
+        dsimp [HybridFinmapLike.setSingle.update, HybridFinmapLike.get]
+        congr 1
+        apply IteratedProd.map_DecidableEq_eq
+      | concrete fc =>
+        simp only [HybridFinmapLike.setSingle.update]
+        cases h : FieldUpdatePat.footprintRestricted instfin fa with
+        | none =>
+          dsimp [HybridFinmapLike.get]
+          congr 1
+          apply IteratedProd.map_DecidableEq_eq
+        | some footprint =>
+          dsimp [HybridFinmapLike.get]
+          apply FieldRepresentation.FinmapLike.get_set_for_validFootprint
+          exact FieldUpdatePat.footprintRestricted_valid instfin fa footprint h
+    cases v with
+    | function value => exact fallback
+    | constant value =>
+      by_cases h : fa.isAll = true
+      · simp +unfoldPartialApp [HybridFinmapLike.setSingle, h, HybridFinmapLike.get,
+          FinmapLike.get, FiniteSupportMap.get,
+          CanonicalField.set, FieldUpdateDescr.fieldUpdate, FieldUpdateValue.toCanonical,
+          IteratedArrow.uncurry_curry, FieldUpdatePat.match_of_isAll dec fa h, Function.comp_def]
+      · simpa only [HybridFinmapLike.setSingle, h, Bool.false_eq_true, ↓reduceIte] using fallback
 
 end NotNecessarilyFinmapLikeUpdates
 

@@ -42,7 +42,21 @@ section UpdatePatterns
 
 /-- A field update pattern specifies which components are accessed. -/
 abbrev FieldUpdatePat : Type := IteratedProd (FieldDomain.map Option)
-abbrev FieldUpdateDescr := List (⌞ FieldUpdatePat ⌟ × ⌞_ CanonicalField ⌟)
+/-- Executable update metadata. A constant carries its value explicitly rather
+than asking the runtime to decide whether an arbitrary function is constant. -/
+inductive FieldUpdateValue where
+  | function (value : ⌞_ CanonicalField ⌟)
+  | constant (value : FieldCodomain)
+
+/-- The logical meaning of either update representation. -/
+def FieldUpdateValue.toCanonical : FieldUpdateValue FieldDomain FieldCodomain → ⌞_ CanonicalField ⌟
+  | .function value => value
+  | .constant value => IteratedArrow.curry fun _ => value
+
+instance : Coe (⌞_ CanonicalField ⌟) (FieldUpdateValue FieldDomain FieldCodomain) :=
+  ⟨FieldUpdateValue.function⟩
+
+abbrev FieldUpdateDescr := List (⌞ FieldUpdatePat ⌟ × FieldUpdateValue FieldDomain FieldCodomain)
 
 def fieldUpdatePatComponentMatch (a : Option (Enumeration t)) (b : Option t) :
   Option (Unit → List t) :=
@@ -61,6 +75,24 @@ def FieldUpdatePat.match
   (fa : FieldUpdatePat FieldDomain) args :=
   IteratedProd.patCmp (fun o x => o.elim true (fun y => decide (y = x))) dec fa args
 
+/-- Whether an update covers the entire domain. -/
+def FieldUpdatePat.isAll {FieldDomain : List Type} (fa : FieldUpdatePat FieldDomain) : Bool :=
+  match FieldDomain, fa with
+  | [], () => true
+  | _ :: _, (head, tail) => head.isNone && FieldUpdatePat.isAll tail
+
+theorem FieldUpdatePat.match_of_isAll {FieldDomain : List Type}
+    (dec : IteratedProd (FieldDomain.map DecidableEq))
+    (fa : FieldUpdatePat FieldDomain) (h : fa.isAll = true)
+    (args : IteratedProd FieldDomain) : fa.match dec args = true := by
+  induction FieldDomain with
+  | nil => rfl
+  | cons head tail ih =>
+    rcases fa with ⟨fa, fas⟩
+    rcases args with ⟨arg, args⟩
+    rcases dec with ⟨dec, decs⟩
+    cases fa <;> simp_all [isAll, FieldUpdatePat.match, IteratedProd.patCmp]
+
 def FieldUpdateDescr.fieldUpdate
   {FieldDomain : List Type}
   {FieldCodomain : Type}
@@ -68,7 +100,7 @@ def FieldUpdateDescr.fieldUpdate
   (favs : ⌞_ FieldUpdateDescr ⌟)
   (vbase : ⌞_ CanonicalField ⌟)
   (args : IteratedProd FieldDomain) : FieldCodomain :=
-  favs.foldr (init := vbase.uncurry args) fun (fa, v) acc => if fa.match dec args then v.uncurry args else acc
+  favs.foldr (init := vbase.uncurry args) fun (fa, v) acc => if fa.match dec args then v.toCanonical.uncurry args else acc
 
 def CanonicalField.set {FieldDomain : List Type} {FieldCodomain : Type}
   (dec : IteratedProd (FieldDomain.map DecidableEq))
@@ -201,7 +233,7 @@ abbrev FieldRepresentation.setSingle {FieldDomain : List Type}
   {FieldCodomain FieldTypeConcrete : Type}
   [self : ⌞_ FieldRepresentation FieldTypeConcrete ⌟]
   (fa : ⌞ FieldUpdatePat ⌟)
-  (v : ⌞_ CanonicalField ⌟)
+  (v : FieldUpdateValue FieldDomain FieldCodomain)
   (fc : FieldTypeConcrete) : FieldTypeConcrete :=
   self.set [(fa, v)] fc
 
@@ -209,7 +241,7 @@ abbrev FieldRepresentation.setSingle {FieldDomain : List Type}
 def FieldRepresentation.mkFromSingleSet {FieldDomain : List Type}
   {FieldCodomain : Type} {FieldTypeConcrete : Type}
   (get : FieldTypeConcrete → ⌞_ CanonicalField ⌟)
-  (setSingle : ⌞ FieldUpdatePat ⌟ → ⌞_ CanonicalField ⌟ → FieldTypeConcrete → FieldTypeConcrete) :
+  (setSingle : ⌞ FieldUpdatePat ⌟ → FieldUpdateValue FieldDomain FieldCodomain → FieldTypeConcrete → FieldTypeConcrete) :
   ⌞_ FieldRepresentation FieldTypeConcrete ⌟ where
   get := get
   set favs fc := favs.foldr (init := fc) fun (fa, v) acc => setSingle fa v acc
@@ -217,7 +249,7 @@ def FieldRepresentation.mkFromSingleSet {FieldDomain : List Type}
 theorem LawfulFieldRepresentationSet.mkFromSingleSet {FieldDomain : List Type}
   {FieldCodomain : Type} {FieldTypeConcrete : Type}
   (get : FieldTypeConcrete → ⌞_ CanonicalField ⌟)
-  (setSingle : ⌞ FieldUpdatePat ⌟ → ⌞_ CanonicalField ⌟ → FieldTypeConcrete → FieldTypeConcrete) :
+  (setSingle : ⌞ FieldUpdatePat ⌟ → FieldUpdateValue FieldDomain FieldCodomain → FieldTypeConcrete → FieldTypeConcrete) :
   (⌞_ LawfulFieldRepresentationSet FieldTypeConcrete ⌟)
     (FieldRepresentation.mkFromSingleSet get setSingle) where
   set_append := by
@@ -278,7 +310,7 @@ theorem LawfulFieldRepresentation.get_set_idempotent' {FieldDomain : List Type} 
 instance (priority := high + 1) instFieldRepresentationIndividual
   : FieldRepresentation [] FieldCodomain FieldCodomain where
   get := id
-  set favs fc := List.head? favs |>.elim fc Prod.snd
+  set favs fc := List.head? favs |>.elim fc (fun fav => fav.2.toCanonical)
 
 set_option backward.isDefEq.respectTransparency false in
 instance (priority := high + 1) instLawfulFieldRepresentationIndividual
@@ -319,7 +351,7 @@ extraction. -/
 attribute [fieldRepresentationPatSimp] FieldUpdatePat.pad IteratedArrow.curry IteratedProd.default HAppend.hAppend IteratedProd.append Eq.mp
 attribute [fieldRepresentationPatSimp] List.take List.drop List.map
 attribute [fieldRepresentationSetSimpPre] FieldRepresentation.setSingle LawfulFieldRepresentationSet.set_append List.singleton_append
-attribute [fieldRepresentationSetSimpPost] CanonicalField.set FieldUpdateDescr.fieldUpdate FieldUpdatePat.match IteratedProd.patCmp IteratedArrow.curry IteratedArrow.uncurry
+attribute [fieldRepresentationSetSimpPost] FieldUpdateValue.toCanonical CanonicalField.set FieldUpdateDescr.fieldUpdate FieldUpdatePat.match IteratedProd.patCmp IteratedArrow.curry IteratedArrow.uncurry
 attribute [fieldRepresentationSetSimpPost] List.foldr Option.elim Bool.and_true Bool.and_eq_true decide_eq_true_eq ite_eq_left_iff Bool.false_eq_true false_and and_self
 attribute [fieldRepresentationSetSimpPost ↓] reduceIte ite_true ite_false and_true true_and
 

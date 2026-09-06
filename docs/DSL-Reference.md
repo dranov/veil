@@ -390,6 +390,38 @@ tool). Progress and action-coverage statistics are displayed live in an
 InfoView widget; if a violation is found, Veil shows a concrete counterexample
 trace.
 
+Functions and relations over non-enumerable domains such as `Nat` can be
+checked when their values have a constant default and finitely many exceptions.
+For example, `r N := false` initializes an empty relation, `r 0 := true` adds an
+exception, and another `r N := false` clears all exceptions. Defaults need not
+be `false` or zero: `r N := true` represents a cofinite relation, and
+`f N := 5` gives a numeric function a default of five. Writing the default value
+at a point removes that exception. Omitting an initialization write uses the
+codomain's `Inhabited` default and the same representation.
+
+Whole-domain assignments are supported when elaboration recognizes that the
+right-hand side is independent of the domain arguments, including values read from
+the current state. Point updates and updates whose remaining coordinates can
+be enumerated are also supported. Arbitrary argument-dependent assignments
+such as `f N := N + 1`, and writes across an infinite slice such as
+`r N 0 := true`, fall back to opaque functions. If such a field survives in an
+initial or successor state considered by the checker, `#model_check` reports an
+error naming the field, before computing its fingerprint. A subsequent complete
+constant reset within the same action can restore a finite representation.
+State constraints may exclude a state before its identity is needed.
+
+This support does not make the reachable state space finite: an action that
+keeps adding new exceptions may still run indefinitely. The checker continues
+to use 64-bit state fingerprints. Custom state types containing opaque fields
+must provide an appropriate `Veil.ModelCheckRepresentation` instance; custom
+low-level checker clients must supply `SearchParameters.validateState`.
+
+For representation implementers, update descriptors now carry
+`FieldUpdateValue.function` or `FieldUpdateValue.constant`; use `toCanonical`
+to obtain their common logical meaning. The `LawfulFieldRepresentation` laws
+cover both constructors. Explicit constants retain the information needed to
+execute a whole-domain reset without trying to inspect an arbitrary function.
+
 #### Symbolic Bounded Model Checking
 
 Explore system behaviors with trace queries, discharged via SMT. Unlike

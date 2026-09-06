@@ -21,7 +21,9 @@ instance [Ord α] [BEq α]: BEq (Std.TreeSet α) where
 instance [Ord α] [BEq α] [BEq β]: BEq (Std.TreeMap α β) where
   beq s1 s2 := s1.toArray == s2.toArray
 
--- FIXME: provide more reasonable `BEq` instances; same below
+-- Sentinel instances keep hybrid types executable outside model checking.
+-- They are not valid state identities: ModelCheckRepresentation rejects opaque
+-- wrappers before the checker can compare or fingerprint them.
 instance : BEq (CanonicalFieldWrapper FieldDomain FieldCodomain) where
   beq _ _ := true
 
@@ -305,6 +307,23 @@ instance jsonOfExtTreeSet [Ord α] [ToJson α] [Std.TransOrd α] : ToJson (Std.E
 
 instance jsonOfExtTreeMap [Ord α] [ToJson α] [ToJson β] [Std.TransOrd α] : ToJson (Std.ExtTreeMap α β) where
   toJson m := Json.arr <| m.toList.toArray.map (fun (k, v) => Json.arr #[toJson k, toJson v])
+
+
+instance [Ord α] [Std.TransOrd α] [Repr α] [Repr β] : Repr (FiniteSupportMap α β) where
+  reprPrec value prec := reprPrec (value.defaultValue, value.entries.toList) prec
+
+/-- Explicit defaults matter for infinite-domain functions: the finite entries
+alone do not describe the entire function. -/
+instance [Ord α] [Std.TransOrd α] [ToJson α] [ToJson β] : ToJson (FiniteSupportMap α β) where
+  toJson value := Json.mkObj [
+    ("default", toJson value.defaultValue), ("entries", toJson value.entries)]
+
+/-- Preserve the compact set display for the common false-default relation. -/
+instance (priority := high) [Ord α] [Std.TransOrd α] [ToJson α] : ToJson (FiniteSupportMap α Bool) where
+  toJson value :=
+    if value.defaultValue then Json.mkObj [
+      ("default", toJson true), ("entries", toJson value.entries)]
+    else toJson (value.entries.toList.filterMap fun (key, present) => if present then some key else none)
 
 
 end Veil

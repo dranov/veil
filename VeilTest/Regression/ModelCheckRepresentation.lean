@@ -1,7 +1,7 @@
 import Veil
 
 /-! Opaque function storage must never silently collapse reachable states. -/
-veil module OpaqueInitializer
+veil module ConstantInitializer
 relation r : Nat → Bool
 after_init { r N := false }
 action a { r 0 := true }
@@ -9,13 +9,29 @@ action b { require r 0; r 1 := true }
 invariant [r1_false] ¬ r 1
 termination True
 #gen_spec
-/-- error: 💥 Error: Cannot model check: state field 'r' cannot be fully represented. An assignment over a non-enumerable domain produced an opaque function, so distinct states cannot be distinguished. Use a finite domain or finite point updates. -/
+/--
+error: ❌ Violation: safety_failure (violates: r1_false)
+  State 0 (via init):
+    r = []
+  State 1 (via a):
+    r = [0]
+  State 2 (via b):
+    r = [0, 1]
+-/
 #guard_msgs in
 #model_check interpreted {} {} (sequential := true)
-/-- error: 💥 Error: Cannot model check: state field 'r' cannot be fully represented. An assignment over a non-enumerable domain produced an opaque function, so distinct states cannot be distinguished. Use a finite domain or finite point updates. -/
+/--
+error: ❌ Violation: safety_failure (violates: r1_false)
+  State 0 (via init):
+    r = []
+  State 1 (via a):
+    r = [0]
+  State 2 (via b):
+    r = [0, 1]
+-/
 #guard_msgs in
 #model_check interpreted {} {} (parallelCfg := some { numSubTasks := 2, thresholdToParallel := 0 })
-end OpaqueInitializer
+end ConstantInitializer
 
 veil module OpaqueSuccessor
 relation r : Nat → Bool

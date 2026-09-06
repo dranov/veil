@@ -16,7 +16,7 @@ attribute [dsimpFieldRepresentationGet ↓] FieldRepresentation.get FieldReprese
   Equiv.coe_fn_mk Function.comp IteratedProd'.equiv IteratedProd.toIteratedProd'
 attribute [dsimpFieldRepresentationSet ↓] FieldRepresentation.setSingle FieldRepresentation.mkFromSingleSet
   instFinmapLikeAsFieldRep FieldRepresentation.FinmapLike.setSingle'
-  IteratedArrow.curry IteratedProd'.equiv Equiv.coe_fn_mk IteratedProd.toIteratedProd' IteratedArrow.uncurry List.foldr
+  FieldUpdateValue.toCanonical IteratedArrow.curry IteratedProd'.equiv Equiv.coe_fn_mk IteratedProd.toIteratedProd' IteratedArrow.uncurry List.foldr
   IteratedProd.foldMap FieldUpdatePat.footprintRaw IteratedProd.zipWith Option.elim List.foldl
 
 -- ad-hoc subprocedure for finding the target `State.Label.toDomain/toCodomain`

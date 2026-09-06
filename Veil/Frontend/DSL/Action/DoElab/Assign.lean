@@ -331,6 +331,24 @@ private def mkAssignmentPattern (mod : Module) (component : StateComponent)
     ($(mkIdent ``FieldUpdatePat.pad) ($domain)
       $(Syntax.mkNatLit options.size) $options*))
 
+/-- Preserve a constant RHS explicitly when it does not depend on any domain
+argument. This is a syntactic/definitional check on the elaborated term, never
+sampling values from an infinite domain. -/
+private def preserveConstantUpdate (domainSize : Nat) (setValue : Expr) : TermElabM Expr := do
+  let_expr FieldRepresentation.setSingle domain codomain concrete inst pattern update field := setValue
+    | return setValue
+  let_expr FieldUpdateValue.function _ _ value := update | return setValue
+  forallBoundedTelescope (← inferType value) (some domainSize) (whnfType := true) fun args _ => do
+    let body := (← instantiateMVars (mkAppN value args)).headBeta
+    if body.hasAnyFVar (fun id => args.any (fun arg => arg.fvarId! == id)) then
+      return setValue
+    unless ← isDefEq (← inferType body) codomain do return setValue
+    let constant := mkAppN (mkConst ``FieldUpdateValue.constant) #[domain, codomain, body]
+    let meaning := mkAppN (mkConst ``FieldUpdateValue.toCanonical) #[domain, codomain, constant]
+    unless ← isDefEq meaning value do return setValue
+    return mkAppN (mkConst ``FieldRepresentation.setSingle)
+      #[domain, codomain, concrete, inst, pattern, constant, field]
+
 /-- Emit the monadic write for a state assignment whose fixed indices were
 already pinned by `withPinnedTargetArgs`, so each index is a let-bound fvar that
 can safely appear in several generated positions.
@@ -360,8 +378,12 @@ private def elabPinnedStateAssignment (mod : Module) (component : StateComponent
 
   let concrete := currentConcreteFieldIdent component.name
   let setTerm ←
-    `(($fieldRepresentation _).$(mkIdent `setSingle) ($pattern) ($replacement) $concrete)
-  let setValue ← Term.elabTerm setTerm none
+    `(($fieldRepresentation _).$(mkIdent `setSingle) ($pattern)
+      ($(mkIdent ``FieldUpdateValue.function) ($replacement)) $concrete)
+  -- Resolve this assignment's numeral/coercion metavariables without forcing
+  -- postponed constraints from surrounding nondeterministic control flow.
+  let setValue ← Term.withSynthesize (postpone := .partial) <| Term.elabTerm setTerm none
+  let setValue ← preserveConstantUpdate domainSize (← instantiateMVars setValue)
   let setType ← inferType setValue
   let bindName ← mkFreshUserName
     (mkVeilImplementationDetailName <| Name.mkSimple s!"bind_{component.name}")

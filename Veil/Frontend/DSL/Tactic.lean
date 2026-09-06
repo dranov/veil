@@ -291,7 +291,7 @@ FieldRepresentation.FinmapLike.setSingle' IteratedArrow.uncurry List.foldr
 IteratedProd.foldMap FieldUpdatePat.footprintRaw IteratedProd.zipWith
 Option.elim List.foldl FieldUpdatePat.pad IteratedProd.default HAppend.hAppend
 IteratedProd.append Eq.mp LawfulFieldRepresentationSet.set_append
-List.singleton_append CanonicalField.set FieldUpdateDescr.fieldUpdate
+List.singleton_append CanonicalField.set FieldUpdateDescr.fieldUpdate FieldUpdateValue.toCanonical
 FieldUpdatePat.match IteratedProd.patCmp Bool.and_true Bool.and_eq_true
 decide_eq_true_eq ite_eq_left_iff Bool.false_eq_true false_and and_self
 reduceIte ite_true ite_false and_true true_and List.head?
