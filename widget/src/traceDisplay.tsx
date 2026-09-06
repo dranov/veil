@@ -1,3 +1,4 @@
+import { FieldFilter, useFieldVisibility } from './fieldVisibility';
 import { styles } from './traceDisplayStyles';
 import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
@@ -254,8 +255,6 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
   const [showRawModel, setShowRawModel] = React.useState(false);
   const [showRemovals, setShowRemovals] = React.useState(false);
   const [allStatesOpen, setAllStatesOpen] = React.useState<boolean | null>(null);  // null = individual control
-  const [hiddenFields, setHiddenFields] = React.useState<Set<string>>(new Set());
-  const [showFilterPanel, setShowFilterPanel] = React.useState(false);
 
   // Compute all unique field names from the trace
   const traceData = 'trace' in result ? result.trace : undefined;
@@ -269,21 +268,9 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
     }
     return Array.from(names).sort();
   }, [traceData]);
+  const visibility = useFieldVisibility(allFieldNames);
+  const {hiddenFields, showFilterPanel, setShowFilterPanel, toggleFieldVisibility} = visibility;
 
-  const toggleFieldVisibility = (fieldName: string) => {
-    setHiddenFields(prev => {
-      const next = new Set(prev);
-      if (next.has(fieldName)) {
-        next.delete(fieldName);
-      } else {
-        next.add(fieldName);
-      }
-      return next;
-    });
-  };
-
-  const showAllFields = () => setHiddenFields(new Set());
-  const hideAllFields = () => setHiddenFields(new Set(allFieldNames));
 
   const shortcuts = useWidgetShortcuts({
     escape: () => setShowFilterPanel(false),
@@ -397,33 +384,7 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
         )}
 
         {/* Filter panel modal - rendered at root level for fixed positioning */}
-        {showFilterPanel && (
-          <>
-            <div className="mc-filter-backdrop" onClick={() => setShowFilterPanel(false)} />
-            <div className="mc-filter-panel">
-              <div className="mc-filter-header">
-                <span>Visible Fields</span>
-                <div className="mc-filter-actions">
-                  <button className="mc-filter-action" onClick={showAllFields}>Show all</button>
-                  <button className="mc-filter-action" onClick={hideAllFields}>Hide all</button>
-                  <button className="mc-filter-close" onClick={() => setShowFilterPanel(false)} title="Close (Esc)">×</button>
-                </div>
-              </div>
-              <div className="mc-filter-list">
-                {allFieldNames.map(name => (
-                  <label key={name} className="mc-filter-item">
-                    <input
-                      type="checkbox"
-                      checked={!hiddenFields.has(name)}
-                      onChange={() => toggleFieldVisibility(name)}
-                    />
-                    <code>{name}</code>
-                  </label>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+      <FieldFilter prefix="mc" fieldNames={allFieldNames} visibility={visibility} />
       </div>
     </>
   );

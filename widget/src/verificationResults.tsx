@@ -1,8 +1,9 @@
+import { FieldFilter, useFieldVisibility } from './fieldVisibility';
 import { styles } from './verificationResultsStyles';
 import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
 import { InsertionSourceContext, useEditorInsertion } from './editorInsertion';
-import HtmlDisplay, { Html } from './htmlDisplay';
+import HtmlDisplay from './htmlDisplay';
 import {
   ChangeInfo,
   diffChanges,
@@ -15,7 +16,7 @@ import {
 
 // ========== Types ==========
 
-import type { InductionMetadataData, StructuredJson, Counterexample, DischargerStatusFinished, Discharger, VerificationCondition, VerificationResultsProps, InsertPosition } from './protocol';
+import type { InductionMetadataData, StructuredJson, DischargerStatusFinished, VerificationCondition, VerificationResultsProps, InsertPosition } from './protocol';
 import { getEffectiveStatus, buildAlternativeMap, proofStyle, firstCounterexample, selectWitness } from './verificationSelectors';
 
 type StatusFilter = 'all' | 'proven' | 'disproven' | 'unknown' | 'error' | 'timeout' | 'pending';
@@ -146,8 +147,6 @@ const StructuredCexView: React.FC<{
 
   // State for toolbar features
   const [showRemovals, setShowRemovals] = React.useState(false);
-  const [hiddenFields, setHiddenFields] = React.useState<Set<string>>(new Set());
-  const [showFilterPanel, setShowFilterPanel] = React.useState(false);
   const [isWideEnough, setIsWideEnough] = React.useState(true);
   const containerRef = React.useRef<HTMLDivElement>(null);
 
@@ -176,6 +175,9 @@ const StructuredCexView: React.FC<{
     }
     return Array.from(names).sort();
   }, [preState, postState]);
+  const visibility = useFieldVisibility(allFieldNames);
+  const {hiddenFields, showFilterPanel, setShowFilterPanel} = visibility;
+
 
   // Filter fields based on hiddenFields
   const filteredPreState = React.useMemo(() => {
@@ -218,21 +220,6 @@ const StructuredCexView: React.FC<{
     () => mergeTheoryWithExtras(theory, extraVals),
     [theory, extraVals]
   );
-
-  const toggleFieldVisibility = (fieldName: string) => {
-    setHiddenFields(prev => {
-      const next = new Set(prev);
-      if (next.has(fieldName)) {
-        next.delete(fieldName);
-      } else {
-        next.add(fieldName);
-      }
-      return next;
-    });
-  };
-
-  const showAllFields = () => setHiddenFields(new Set());
-  const hideAllFields = () => setHiddenFields(new Set(allFieldNames));
 
   const shortcuts = useWidgetShortcuts({
     escape: () => setShowFilterPanel(false),
@@ -318,42 +305,12 @@ const StructuredCexView: React.FC<{
       )}
 
       {/* Filter panel modal */}
-      {showFilterPanel && (
-        <>
-          <div className="cex-filter-backdrop" onClick={() => setShowFilterPanel(false)} />
-          <div className="cex-filter-panel">
-            <div className="cex-filter-header">
-              <span>Visible Fields</span>
-              <div className="cex-filter-actions">
-                <button className="cex-filter-action" onClick={showAllFields}>Show all</button>
-                <button className="cex-filter-action" onClick={hideAllFields}>Hide all</button>
-                <button className="cex-filter-close" onClick={() => setShowFilterPanel(false)} title="Close (Esc)">×</button>
-              </div>
-            </div>
-            <div className="cex-filter-list">
-              {allFieldNames.map(name => (
-                <label key={name} className="cex-filter-item">
-                  <input
-                    type="checkbox"
-                    checked={!hiddenFields.has(name)}
-                    onChange={() => toggleFieldVisibility(name)}
-                  />
-                  <span>{name}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
+      <FieldFilter prefix="cex" fieldNames={allFieldNames} visibility={visibility} />
     </div>
   );
 };
 
 const TRUST_RECONSTRUCTION_OPTION = 'set_option veil.smt.trust false';
-
-// ========== Editor Insertion ==========
-
-
 
 /** Banner shown when there are VCs that need manual proof (unknown/error status) */
 const ManualProofBanner: React.FC<{
@@ -535,7 +492,7 @@ function isInductionVC(vc: VerificationCondition): boolean {
 // Helper to get induction metadata data (returns null for trace VCs)
 function getInductionData(vc: VerificationCondition): InductionMetadataData | null {
   if (vc.metadata.type === 'induction') {
-    return vc.metadata.data as InductionMetadataData;
+    return vc.metadata.data;
   }
   return null;
 }
@@ -662,7 +619,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], theore
   const handleRowClick = async (e: React.MouseEvent) => {
     const isCmdOrCtrl = e.metaKey || e.ctrlKey;
 
-    // Cmd+Shift+click to insert TR version
+    // Modified shift-click inserts the first alternative; all are listed when expanded.
     if (isCmdOrCtrl && e.shiftKey && alternativeTheorems.length > 0) {
       e.preventDefault();
       e.stopPropagation();
