@@ -656,6 +656,7 @@ structure ModelCheckContext where
   mod : Module
   stx : Syntax
   instanceId : Nat
+  progressRefs : ModelChecker.Concrete.ProgressRefs
   cancelToken : IO.CancelToken
   assertionSources : Std.HashMap AssertionId AssertionSourceInfo
   parallelCfg : Option ModelChecker.ParallelConfig
@@ -882,6 +883,7 @@ where
           ModelChecker.Concrete.cancelProgress instanceId
           return true
         checkCancelled cancelToken instanceId)
+      (maxStdoutChars := none)
     if result.interrupted then return false
     if result.exitCode != 0 then
       ModelChecker.Concrete.finishProgress instanceId (errorJson s!"Binary exited with code {result.exitCode}{if result.stderr.isEmpty then "" else s!"\n{result.stderr}"}")
@@ -922,7 +924,9 @@ where
       (parallelCfg : Option ModelChecker.ParallelConfig) : CommandElabM ModelCheckContext := do
     let (instanceId, cancelToken) ← ModelChecker.Concrete.allocProgressInstance (← getActionLabelNames mod)
     let assertionSources := extractAssertionSources (← globalEnv.get).assertions (← getFileMap)
-    return { mod, stx, instanceId, cancelToken, assertionSources, parallelCfg }
+    let some progressRefs ← ModelChecker.Concrete.getProgressRefs instanceId
+      | throwError "Internal error: newly allocated model-check run is missing"
+    return { mod, stx, instanceId, progressRefs, cancelToken, assertionSources, parallelCfg }
 
   /-- Handle errors in model checking computations. -/
   handleModelCheckError (ctx : ModelCheckContext) (e : Exception) : CommandElabM Unit := do
@@ -942,7 +946,7 @@ where
     try
       let some binPath ← verifyBinaryExists buildFolder ctx.instanceId | return
       let _ ← runBinaryAndFinish binPath ctx.parallelCfg ctx.instanceId ctx.cancelToken ctx.assertionSources ownerCancelToken
-      let some resultJson ← ModelChecker.Concrete.getResultJson ctx.instanceId | return
+      let some resultJson := (← ModelChecker.Concrete.getProgressSnapshot ctx.progressRefs).2 | return
       logModelCheckResult ctx.stx resultJson
     finally
       IO.FS.removeDirAll buildFolder

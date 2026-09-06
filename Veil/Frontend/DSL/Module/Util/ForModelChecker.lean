@@ -127,20 +127,24 @@ Returns the absolute path to the build folder. -/
 def createBuildFolder (sourceFile : String) (modelSource : String) (specNamespace : String) : IO System.FilePath := do
   let veilPath ← IO.currentDir
   let buildFolder ← generateBuildFolderName sourceFile
-  -- Create the build folder
-  IO.FS.createDirAll buildFolder
-  -- Write the lakefile
-  IO.FS.writeFile (buildFolder / "lakefile.lean") lakefileTemplate
-  -- Write the model source (renamed to Model.lean)
-  IO.FS.writeFile (buildFolder / "Model.lean") modelSource
-  -- Write the ModelCheckerMain.lean
-  IO.FS.writeFile (buildFolder / "ModelCheckerMain.lean") (modelCheckerMainTemplate specNamespace)
-  -- Create a minimal lean-toolchain file (copy from parent)
-  let toolchainPath := veilPath / "lean-toolchain"
-  if ← toolchainPath.pathExists then
-    let toolchain ← IO.FS.readFile toolchainPath
-    IO.FS.writeFile (buildFolder / "lean-toolchain") toolchain
-  return buildFolder
+  try
+    -- Create the build folder
+    IO.FS.createDirAll buildFolder
+    -- Write the lakefile
+    IO.FS.writeFile (buildFolder / "lakefile.lean") lakefileTemplate
+    -- Write the model source (renamed to Model.lean)
+    IO.FS.writeFile (buildFolder / "Model.lean") modelSource
+    -- Write the ModelCheckerMain.lean
+    IO.FS.writeFile (buildFolder / "ModelCheckerMain.lean") (modelCheckerMainTemplate specNamespace)
+    -- Create a minimal lean-toolchain file (copy from parent)
+    let toolchainPath := veilPath / "lean-toolchain"
+    if ← toolchainPath.pathExists then
+      let toolchain ← IO.FS.readFile toolchainPath
+      IO.FS.writeFile (buildFolder / "lean-toolchain") toolchain
+    return buildFolder
+  catch e =>
+    IO.FS.removeDirAll buildFolder
+    throw e
 
 /-- Result of running a compilation process. -/
 structure ProcessResult where
@@ -150,12 +154,19 @@ structure ProcessResult where
   interrupted : Bool := false
   deriving Inhabited
 
+/-- Retain the tail of diagnostics with an explicit truncation marker. -/
+def retainOutputTail (output : String) (limit : Nat) : String :=
+  if output.length <= limit then output else
+  let marker := "[earlier output truncated]\n"
+  (marker.take limit).toString ++ (output.takeEnd (limit - marker.length)).toString
+
 /-- Run a request-owned process, draining both streams before returning. Cancellation
 kills the process group on POSIX so compiler descendants cannot keep pipes or artifacts alive. -/
 def runProcessWithStatusCallback (cfg : IO.Process.SpawnArgs)
     (statusCallback : Nat → IO Unit)
     (lineCallback : String → Bool → Nat → IO Unit := fun _ _ _ => pure ())
-    (shouldCancel : IO Bool := pure false) : IO ProcessResult := do
+    (shouldCancel : IO Bool := pure false)
+    (maxStdoutChars : Option Nat := some 65536) : IO ProcessResult := do
   if ← shouldCancel then return { exitCode := 0, stdout := "", stderr := "", interrupted := true }
   let startTime ← IO.monoMsNow
   let proc ← IO.Process.spawn { cfg with stdin := .piped, stdout := .piped, stderr := .piped, setsid := true }
@@ -165,7 +176,11 @@ def runProcessWithStatusCallback (cfg : IO.Process.SpawnArgs)
     while true do
       let line ← handle.getLine
       if line.isEmpty then break
-      accum.modify (· ++ line)
+      accum.modify fun prior =>
+        let output := prior ++ line
+        match (if isError then some 65536 else maxStdoutChars) with
+        | some limit => retainOutputTail output limit
+        | none => output
       unless ← shouldCancel do
         lineCallback line.trimAsciiEnd.toString isError ((← IO.monoMsNow) - startTime)
   let stdoutTask ← IO.asTask (prio := .dedicated) (readLines proc.stdout stdoutAccum false)

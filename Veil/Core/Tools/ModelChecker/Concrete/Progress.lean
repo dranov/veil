@@ -59,6 +59,17 @@ structure ProgressHistoryPoint where
   queue : Nat
   deriving ToJson, FromJson, Inhabited, Repr
 
+/-- Retention budgets apply independently to samples, compiler output and finished runs. -/
+def maxProgressHistory : Nat := 512
+def maxCompilationLogLines : Nat := 256
+def maxCompilationLineChars : Nat := 2048
+def maxRetainedResults : Nat := 64
+
+/-- Keep a bounded recent window. Copying releases the array's discarded backing storage. -/
+def pushRecent (items : Array α) (item : α) (limit : Nat) : Array α :=
+  let items := items.push item
+  items.extract (items.size - limit) items.size
+
 /-- Progress information for model checking, using TLC-style terminology. -/
 structure Progress where
   status : String := "Initializing..."
@@ -145,6 +156,16 @@ def getProgressSnapshot (refs : ProgressRefs) : IO (Progress × Option Lean.Json
     let s ← ref.get
     return (s.progress, s.resultJson)
 
+/-- Keep recent results addressable by ID. Existing panels/workers own their handles
+    directly, so pruning an index entry does not invalidate a displayed result. -/
+def pruneFinishedProgress : IO Unit := do
+  let mut completed := #[]
+  for (id, refs) in (← progressRegistry.get).toList do
+    if !(← getProgressSnapshot refs).1.isRunning then completed := completed.push id
+  completed := completed.qsort (· < ·)
+  let expired := completed.extract 0 (completed.size - maxRetainedResults)
+  progressRegistry.modify fun registry => expired.foldl (fun m id => m.erase id) registry
+
 def getCancelToken (instanceId : Nat) : IO (Option IO.CancelToken) := do
   let some refs ← getProgressRefs instanceId | return none
   refs.state.atomically fun ref => return some (← ref.get).cancelToken
@@ -163,7 +184,7 @@ def updateProgress (instanceId : Nat)
         timestamp := elapsed, diameter, statesFound, distinctStates, queue }
       { s with progress := { p with
         diameter, statesFound, distinctStates, queue, actionStats
-        elapsedMs := elapsed, history := p.history.push historyPoint } }
+        elapsedMs := elapsed, history := pushRecent p.history historyPoint maxProgressHistory } }
   if ← compiledModeEnabled.get then
     let startTime ← compiledModeStartTime.get
     let p : Progress := {
@@ -182,7 +203,7 @@ def updateCompiledProgress (instanceId : Nat) (p : Progress) : IO Unit :=
     { s with progress := { old with
       diameter := p.diameter, statesFound := p.statesFound
       distinctStates := p.distinctStates, queue := p.queue, actionStats := p.actionStats,
-      elapsedMs := p.elapsedMs, history := old.history.push point } }
+      elapsedMs := p.elapsedMs, history := pushRecent old.history point maxProgressHistory } }
 
 def updateStatus (instanceId : Nat) (status : String) : IO Unit := withRefs instanceId fun refs => do
   let now ← IO.monoMsNow
@@ -195,7 +216,7 @@ def updateStatus (instanceId : Nat) (status : String) : IO Unit := withRefs inst
 def publishResult (instanceId : Nat) (resultJson : Lean.Json) : IO Bool := do
   let some refs ← getProgressRefs instanceId | return false
   let now ← IO.monoMsNow
-  refs.state.atomically fun ref => do
+  let accepted ← refs.state.atomically fun ref => do
     let s ← ref.get
     let violation := resultJson.getObjValD "result" == .str "found_violation"
     if !s.progress.isRunning ||
@@ -206,6 +227,8 @@ def publishResult (instanceId : Nat) (resultJson : Lean.Json) : IO Bool := do
         status := "Complete", isRunning := false
         elapsedMs := now - s.progress.startTimeMs } }
     return true
+  if accepted then pruneFinishedProgress
+  return accepted
 
 def finishProgress (instanceId : Nat) (resultJson : Lean.Json) : IO Unit := do
   let _ ← publishResult instanceId resultJson
@@ -234,15 +257,16 @@ def requestCancellation (instanceId : Nat) : IO Unit := withRefs instanceId fun 
     ref.set { s with cancellationRequested := true }
 
 /-- Cancellation is terminal and cannot replace an already published result. -/
-def cancelProgress (instanceId : Nat) : IO Unit := withRefs instanceId fun refs => do
+def cancelProgress (instanceId : Nat) : IO Unit := do
   let now ← IO.monoMsNow
-  refs.state.atomically fun ref => ref.modify fun s =>
+  withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
     if !s.progress.isRunning then s else
     { s with
       resultJson := some (Json.mkObj [("result", "cancelled")]), handoffRequested := false
       progress := { s.progress with
         status := "Cancelled", isRunning := false
         isCancelled := true, elapsedMs := now - s.progress.startTimeMs } }
+  pruneFinishedProgress
 
 partial def waitForResult (instanceId : Nat) (pollIntervalMs : Nat := 100) : IO (Option Lean.Json) := do
   let some refs ← getProgressRefs instanceId | return none
@@ -265,8 +289,8 @@ def updateCompilationLog (instanceId : Nat) (elapsedMs : Nat) (line : String) (i
   withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
     if !s.progress.isRunning then s else
     let existingLines := match s.progress.compilationStatus with | .inProgress _ l => l | _ => #[]
-    let newLine : CompilationLogLine := { timestamp := elapsedMs, content := line, isError }
-    { s with progress := { s.progress with compilationStatus := .inProgress elapsedMs (existingLines.push newLine) } }
+    let newLine : CompilationLogLine := { timestamp := elapsedMs, content := (line.take maxCompilationLineChars).toString, isError }
+    { s with progress := { s.progress with compilationStatus := .inProgress elapsedMs (pushRecent existingLines newLine maxCompilationLogLines) } }
 
 def updateCompilationElapsed (instanceId : Nat) (elapsedMs : Nat) : IO Unit :=
   withRefs instanceId fun refs => refs.state.atomically fun ref => ref.modify fun s =>
