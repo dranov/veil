@@ -19,115 +19,8 @@ import {
 
 // ========== Types ==========
 
-interface InductionMetadataData {
-  stmtDerivedFrom?: string[];
-  property: string;
-  kind?: 'primary' | 'alternative';
-  action: string;
-  style?: 'wp' | 'tr';
-}
-
-interface TraceMetadataData {
-  traceName: string;
-  numTransitions: number;
-  isExpectedSat: boolean;
-}
-
-interface VCMetadata {
-  type: 'induction' | 'trace';
-  data: InductionMetadataData | TraceMetadataData;
-}
-
-interface StructuredJson {
-  theory: Record<string, unknown>;
-  preState: Record<string, unknown>;
-  postState: Record<string, unknown> | null;
-  label: Record<string, unknown>;
-  instantiation: Record<string, unknown>;
-  extraVals?: Record<string, unknown>;
-  extraSorts?: Record<string, unknown>;
-}
-
-interface Counterexample {
-  model?: any;
-  structuredJson?: StructuredJson;
-  html: Html | string;  // Can be either structured Html or raw HTML string
-}
-
-interface DischargerResultData {
-  kind: string;
-  counterexamples?: Counterexample[];
-  reasons?: string[];
-}
-
-interface DischargerResult {
-  time: number;
-  status: string;
-  data?: DischargerResultData;
-  exceptions?: string[];
-}
-
-interface DischargerStatusFinished {
-  finished: {
-    res: DischargerResult;
-  };
-}
-
-type DischargerStatus = string | DischargerStatusFinished;
-
-interface Discharger {
-  id: number;
-  name: string;
-  isInteractive: boolean;
-  status: DischargerStatus;
-  time: number | null;
-  startTime: number | null;
-  result?: DischargerResult | null;
-}
-
-interface VCTiming {
-  totalTime: number | null;
-  successfulDischargerTime?: number;
-  successfulDischargerId?: number;
-  dischargers: Discharger[];
-}
-
-interface VerificationCondition {
-  id: number;
-  name: string;
-  status: 'proven' | 'disproven' | 'unknown' | 'error' | 'timeout' | null;
-  metadata: VCMetadata;
-  timing: VCTiming;
-  alternativeFor?: number | null;
-  isDormant?: boolean;
-  /** Theorem text for inserting into the editor (only for non-proven VCs) */
-  theoremText?: string | null;
-  /** True when this VC's selected successful proof witness contains `sorry`. */
-  proofHasSorry?: boolean;
-}
-
-interface VerificationResults {
-  vcs: VerificationCondition[];
-  totalVCs: number;
-  totalSolved: number;
-  totalDischarged: number;
-  serverTime: number;
-}
-
-interface InsertPosition {
-  line: number;
-  character: number;
-}
-
-interface VerificationResultsProps {
-  results: VerificationResults;
-  /** Position after #check_invariants for theorem insertion */
-  theoremInsertPos: InsertPosition;
-  /** Position before #gen_spec for option insertion */
-  optionInsertPos?: InsertPosition | null;
-  /** Document URI for edit operations */
-  documentUri: string;
-}
+import type { InductionMetadataData, StructuredJson, Counterexample, DischargerStatusFinished, Discharger, VerificationCondition, VerificationResultsProps, InsertPosition } from './protocol';
+import { getEffectiveStatus } from './verificationSelectors';
 
 type StatusFilter = 'all' | 'proven' | 'disproven' | 'unknown' | 'error' | 'timeout' | 'pending';
 
@@ -758,34 +651,6 @@ function buildAlternativeMap(vcs: VerificationCondition[]): Map<number, Verifica
     }
   }
   return map;
-}
-
-const EFFECTIVE_STATUS_ORDER: VerificationCondition['status'][] = [
-  'proven',
-  'disproven',
-  null,
-  'error',
-  'timeout',
-  'unknown',
-];
-
-function getActiveStatuses(
-  vc: VerificationCondition,
-  alternativeVC?: VerificationCondition
-): VerificationCondition['status'][] {
-  const statuses: VerificationCondition['status'][] = [vc.status];
-  if (alternativeVC && !alternativeVC.isDormant) {
-    statuses.push(alternativeVC.status);
-  }
-  return statuses;
-}
-
-function getEffectiveStatus(
-  vc: VerificationCondition,
-  alternativeVC?: VerificationCondition
-): VerificationCondition['status'] {
-  const statuses = getActiveStatuses(vc, alternativeVC);
-  return EFFECTIVE_STATUS_ORDER.find(status => statuses.includes(status)) ?? vc.status;
 }
 
 function getVisibleStatus(
