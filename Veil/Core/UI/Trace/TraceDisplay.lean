@@ -97,7 +97,10 @@ def formatModelCheckingResult (j : Json) : MessageData :=
       | _ => ""
     let trace := j.getObjValD "trace"
     let traceMsg := if trace == .null then "" else s!"\n{formatTrace trace}"
-    m!"❌ Violation: {fmtJson (v.getObjValD "kind")}{violates}{traceMsg}"
+    let initialization := j.getObjValD "initialization"
+    let initializationMsg := if initialization == .null then "" else
+      s!"\n  State at initializer failure:\n{fmtFields (initialization.getObjValD "state") "    "}"
+    m!"❌ Violation: {fmtJson (v.getObjValD "kind")}{violates}{traceMsg}{initializationMsg}"
   | "no_violation_found" =>
     let trace := j.getObjValD "trace"
     if trace != .null then m!"✅ Satisfying trace found\n{formatTrace trace}"

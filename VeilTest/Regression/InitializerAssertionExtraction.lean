@@ -17,7 +17,12 @@ invariant true
 #guard_msgs (drop error) in
 #gen_spec
 
-#guard_msgs (drop error) in
+/--
+error: ❌ Violation: initialization_failure
+  State at initializer failure:
+    x = 7
+-/
+#guard_msgs in
 #model_check interpreted {} {}
 
 -- Inspect the generated enumerable system, independently of the initialization VC.
