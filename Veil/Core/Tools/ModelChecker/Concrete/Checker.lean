@@ -90,20 +90,29 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
   unless assumptionViolations.isEmpty do
     setViolationFound progressInstanceId
     return ModelCheckingResult.foundViolation 0 (.assumptionFailure assumptionViolations) none
-  -- Create a "filtered" version of the system
+  -- Restrict exploration while preserving original transition enabledness.
+  -- In the restricted graph a boundary state may have no successors even though
+  -- its original actions are enabled. Permit that boundary to stop exploration.
+  -- This fallback is only needed when the restricted successor list is empty.
+  let searchParams := if params.stateConstraints.isEmpty then params else
+    { params with terminating := {
+      name := params.terminating.name
+      property := fun th' st => params.terminating.holdsOn th' st = true ∨
+        (sys.tr th' st).any (fun (_, outcome) => outcome.isSuccess) = true
+    } }
   let sys := if params.stateConstraints.isEmpty then sys else {
     initStates := sys.initStates.filter (params.satisfiesConstraints th)
     tr := fun th' s => (sys.tr th' s).filter (fun (_, o) => match o with
       | .success s' => params.satisfiesConstraints th s'
-      | .assertionFailure _ s' => params.satisfiesConstraints th s' -- assertion failures should satisfy constraints to be considered
+      | .assertionFailure .. => true -- Failures of executed actions are never pruned.
       | .divergence => true) -- well
   }
   let (ctx, distinctCount) ← match parallelCfg with
     | some cfg => do
-      let mctx ← breadthFirstSearchParallel (σₕ := UInt64) params sys cfg progressInstanceId cancelToken
+      let mctx ← breadthFirstSearchParallel (σₕ := UInt64) searchParams sys cfg progressInstanceId cancelToken
       pure (mctx.base, mctx.globalSeen.size)
     | none => do
-      let sctx ← breadthFirstSearchSequential (σₕ := UInt64) params sys 60000 progressInstanceId cancelToken
+      let sctx ← breadthFirstSearchSequential (σₕ := UInt64) searchParams sys 60000 progressInstanceId cancelToken
       pure (sctx.1, sctx.1.log.size)
   -- A stopping condition controls coverage, not the validity of evidence already found.
   if let (fingerprint, violation) :: _ := ctx.violatingStates then

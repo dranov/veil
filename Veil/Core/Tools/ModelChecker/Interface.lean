@@ -263,9 +263,11 @@ structure SearchParameters (ρ σ : Type) where
   deadlock has occurred. -/
   terminating : SafetyProperty ρ σ := default
 
-  /-- State constraints filter out states during model checking. A state is
-  explored only if ALL constraints hold on it. States violating any constraint
-  are silently skipped (not flagged as violations). -/
+  /-- Constraints bound exploration: only successful initial states and successor
+  states satisfying every constraint are explored. They do not disable actions
+  or manufacture deadlocks at the boundary. Assertion failures from actions
+  executed at an explored state are reported even if their failure state lies
+  outside the constraint. Constraints are not themselves safety assertions. -/
   stateConstraints : List (SafetyProperty ρ σ) := []
 
   /-- Stop the search if _any_ of the stopping conditions are met. Of course,
