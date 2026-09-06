@@ -1,3 +1,4 @@
+import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
 import { EditorContext } from '@leanprover/infoview';
 import HtmlDisplay, { Html } from './htmlDisplay';
@@ -239,33 +240,14 @@ const StructuredCexView: React.FC<{
   const showAllFields = () => setHiddenFields(new Set());
   const hideAllFields = () => setHiddenFields(new Set(allFieldNames));
 
-  // Keyboard shortcuts
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setShowFilterPanel(false);
-        return;
-      }
-
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      if (e.key === 'r' || e.key === 'R') {
-        e.preventDefault();
-        setShowRemovals(prev => !prev);
-      } else if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        setShowFilterPanel(prev => !prev);
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  const shortcuts = useWidgetShortcuts({
+    escape: () => setShowFilterPanel(false),
+    r: () => setShowRemovals(prev => !prev),
+    f: () => setShowFilterPanel(prev => !prev),
+  });
 
   return (
-    <div className="cex-structured-view" ref={containerRef}>
+    <div className="cex-structured-view" ref={containerRef} {...shortcuts}>
       {/* Combined header with toolbar and controls */}
       <div className="cex-header-row">
         <div className="cex-header-left">

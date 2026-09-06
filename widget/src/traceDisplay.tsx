@@ -1,3 +1,4 @@
+import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
 import { DocumentPosition } from '@leanprover/infoview';
 import {
@@ -438,37 +439,12 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
   const showAllFields = () => setHiddenFields(new Set());
   const hideAllFields = () => setHiddenFields(new Set(allFieldNames));
 
-  // Keyboard shortcuts
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Handle Escape first - it should work everywhere to close the panel
-      if (e.key === 'Escape') {
-        setShowFilterPanel(false);
-        return;
-      }
-
-      // Don't trigger other shortcuts when typing in an input field
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      // Only handle shortcuts when not in JSON view
-      if (showRawJson) return;
-
-      if (e.key === 'r' || e.key === 'R') {
-        e.preventDefault();
-        setShowRemovals(prev => !prev);
-      } else if (e.key === 'c' || e.key === 'C') {
-        e.preventDefault();
-        setAllStatesOpen(prev => prev === false ? true : false);
-      } else if (e.key === 'f' || e.key === 'F') {
-        e.preventDefault();
-        setShowFilterPanel(prev => !prev);
-      }
-    };
-
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [showRawJson]);
+  const shortcuts = useWidgetShortcuts({
+    escape: () => setShowFilterPanel(false),
+    c: showRawJson ? undefined : () => setAllStatesOpen(prev => prev === false ? true : false),
+    r: showRawJson ? undefined : () => setShowRemovals(prev => !prev),
+    f: showRawJson ? undefined : () => setShowFilterPanel(prev => !prev),
+  });
 
   const styles = `
     .mc-root {
@@ -739,7 +715,7 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
   return (
     <>
       <style>{styles}</style>
-      <div className="mc-root">
+      <div className="mc-root" {...shortcuts}>
         <div className="mc-toolbar">
           {!showRawJson && !showRawModel && (
             <>
