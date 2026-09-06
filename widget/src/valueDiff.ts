@@ -179,3 +179,17 @@ export function diffChanges(
 
   return changes;
 }
+
+/** Keep one immutable state pair, including equivalent snapshots decoded by a later RPC refresh. */
+export function createDiffCache() {
+  let previous: Record<string, unknown> | null | undefined;
+  let current: Record<string, unknown> | undefined;
+  let changes: Map<string, ChangeInfo>;
+  return (nextPrevious: Record<string, unknown> | null | undefined, nextCurrent: Record<string, unknown>) => {
+    if (current !== undefined && deepEqual(previous, nextPrevious) && deepEqual(current, nextCurrent)) return changes;
+    previous = nextPrevious;
+    current = nextCurrent;
+    changes = diffChanges(previous, current);
+    return changes;
+  };
+}

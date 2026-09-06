@@ -13,3 +13,11 @@ test('large counterexamples fall back before quadratic allocation', () => {
   assert.equal(diffChanges({values:previous}, {values:current}).get('values').type, 'full');
   assert.equal(diffChanges({values:previous}, {values:previous.slice()}).size, 0);
 });
+
+test('fresh RPC snapshots reuse alignment until state values actually change', () => {
+  const {createDiffCache} = require('../src/valueDiff.ts');
+  const diff = createDiffCache();
+  const first = diff({values:[1,2,3]}, {values:[1,4,3]});
+  assert.equal(diff({values:[1,2,3]}, {values:[1,4,3]}), first);
+  assert.notEqual(diff({values:[1,2,3]}, {values:[1,5,3]}), first);
+});

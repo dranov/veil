@@ -1,3 +1,4 @@
+import { useValueDiff } from './useValueDiff';
 import { FieldFilter, useFieldVisibility } from './fieldVisibility';
 import { styles } from './verificationResultsStyles';
 import { useWidgetShortcuts } from './useWidgetShortcuts';
@@ -6,7 +7,6 @@ import { InsertionSourceContext, useEditorInsertion } from './editorInsertion';
 import HtmlDisplay from './htmlDisplay';
 import {
   ChangeInfo,
-  diffChanges,
   CopyButton,
   formatActionLabel,
   renderValue,
@@ -197,7 +197,7 @@ const StructuredCexView: React.FC<{
     return filtered;
   }, [postState, hiddenFields]);
 
-  const changes = React.useMemo(() => filteredPostState ? diffChanges(filteredPreState, filteredPostState) : new Map<string, ChangeInfo>(), [filteredPreState, filteredPostState]);
+  const changes = useValueDiff(filteredPreState, filteredPostState ?? {}, filteredPostState !== null);
 
   // Filter changes to only include visible fields, and optionally hide removals
   const filteredChanges = React.useMemo(() => {

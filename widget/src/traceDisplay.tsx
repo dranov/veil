@@ -1,10 +1,10 @@
+import { useValueDiff } from './useValueDiff';
 import { FieldFilter, useFieldVisibility } from './fieldVisibility';
 import { styles } from './traceDisplayStyles';
 import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
 import {
   ChangeInfo,
-  diffChanges,
   CopyButton,
   formatActionLabel,
   renderValue,
@@ -147,12 +147,11 @@ const StateCard: React.FC<{
 
   // Use forceOpen if set, otherwise use local state
   const open = forceOpen !== null ? forceOpen : localOpen;
-  const changes = React.useMemo(() => {
-    if (!open) return new Map<string, ChangeInfo>();
-    const visible = Object.fromEntries(Object.entries(st.fields).filter(([key]) => !hiddenFields?.has(key)));
-    const previous = previousFields && Object.fromEntries(Object.entries(previousFields).filter(([key]) => !hiddenFields?.has(key)));
-    return diffChanges(previous, visible);
-  }, [open, st.fields, previousFields, hiddenFields]);
+  const [previousVisible, currentVisible] = React.useMemo(() => [
+    previousFields && Object.fromEntries(Object.entries(previousFields).filter(([key]) => !hiddenFields?.has(key))),
+    Object.fromEntries(Object.entries(st.fields).filter(([key]) => !hiddenFields?.has(key))),
+  ] as const, [st.fields, previousFields, hiddenFields]);
+  const changes = useValueDiff(previousVisible, currentVisible, open);
 
   const handleHeaderClick = () => {
     if (forceOpen !== null && onResetForceOpen) {
