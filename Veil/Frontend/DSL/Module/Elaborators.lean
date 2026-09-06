@@ -865,43 +865,33 @@ where
   /-- Run the model checker binary and finish with result. Returns true if completed. -/
   runBinaryAndFinish (binPath : System.FilePath) (parallelCfg : Option ModelChecker.ParallelConfig)
       (instanceId : Nat) (cancelToken : IO.CancelToken)
-      (assertionSources : Std.HashMap AssertionId AssertionSourceInfo) : IO Bool := do
+      (assertionSources : Std.HashMap AssertionId AssertionSourceInfo)
+      (ownerCancelToken : IO.CancelToken) : IO Bool := do
     ModelChecker.Concrete.updateStatus instanceId "Running compiled binary..."
     let args := parallelCfg.map (fun p => #[s!"{p.numSubTasks}", s!"{p.thresholdToParallel}"]) |>.getD #[]
-    let child ← IO.Process.spawn {
-      cmd := toString (binPath / "ModelCheckerMain"), args,
-      stdin := .piped, stdout := .piped, stderr := .piped }
-    -- Read stderr for progress updates
-    let stderrAccum ← IO.mkRef ""
-    let _ ← IO.asTask (prio := .dedicated) do
-      while true do
-        let line ← child.stderr.getLine
-        if line.isEmpty then break
+    let result ← ModelChecker.Compilation.runProcessWithStatusCallback
+      { cmd := toString (binPath / "ModelCheckerMain"), args }
+      (fun _ => pure ())
+      (fun line isError _ => do
+        unless isError do return
         match Json.parse line >>= FromJson.fromJson? (α := ModelChecker.Concrete.Progress) with
         | .ok p => if let some refs ← ModelChecker.Concrete.getProgressRefs instanceId then
             refs.progressRef.modify fun old =>
               let historyPoint : ModelChecker.Concrete.ProgressHistoryPoint := {
-                timestamp := p.elapsedMs
-                diameter := p.diameter
-                statesFound := p.statesFound
-                distinctStates := p.distinctStates
-                queue := p.queue
-              }
+                timestamp := p.elapsedMs, diameter := p.diameter, statesFound := p.statesFound,
+                distinctStates := p.distinctStates, queue := p.queue }
               { p with allActionLabels := old.allActionLabels, history := old.history.push historyPoint }
-        | .error _ => stderrAccum.modify (· ++ line)
-    let stdoutTask ← IO.asTask (prio := .dedicated) child.stdout.readToEnd
-    let waitTask ← IO.asTask (prio := .dedicated) child.wait
-    -- Monitor for cancellation
-    while !(← IO.hasFinished waitTask) do
-      if ← checkCancelled cancelToken instanceId then child.kill; return false
-      IO.sleep 100
-    let stdout ← IO.ofExcept (← IO.wait stdoutTask)
-    let exitCode ← IO.ofExcept (← IO.wait waitTask)
-    let stderr ← stderrAccum.get
-    if exitCode != 0 then
-      ModelChecker.Concrete.finishProgress instanceId (errorJson s!"Binary exited with code {exitCode}{if stderr.isEmpty then "" else s!"\n{stderr}"}")
+        | .error _ => pure ())
+      (do
+        if ← ownerCancelToken.isSet then
+          ModelChecker.Concrete.cancelProgress instanceId
+          return true
+        checkCancelled cancelToken instanceId)
+    if result.interrupted then return false
+    if result.exitCode != 0 then
+      ModelChecker.Concrete.finishProgress instanceId (errorJson s!"Binary exited with code {result.exitCode}{if result.stderr.isEmpty then "" else s!"\n{result.stderr}"}")
       return true
-    let json := Json.parse stdout |>.toOption.getD (errorJson s!"Failed to parse output: {stdout.take 500}")
+    let json := Json.parse result.stdout |>.toOption.getD (errorJson s!"Failed to parse output: {result.stdout.take 500}")
     ModelChecker.Concrete.finishProgress instanceId (enrichJsonWithAssertions json assertionSources)
     return true
 
@@ -951,29 +941,40 @@ where
     logModelCheckResult ctx.stx json
     ModelChecker.Concrete.finishProgress ctx.instanceId json
 
-  /-- Run the compiled binary and log the result. -/
+  /-- Run the request's binary, releasing its private build directory on every exit. -/
   runBinaryAndLogResult (ctx : ModelCheckContext) (buildFolder : System.FilePath)
-      (sourceFile : String) : CommandElabM Unit := do
-    let some binPath ← verifyBinaryExists buildFolder ctx.instanceId | return
-    let _ ← runBinaryAndFinish binPath ctx.parallelCfg ctx.instanceId ctx.cancelToken ctx.assertionSources
-    ModelChecker.Compilation.markRegistryFinished sourceFile buildFolder
-    let some resultJson ← ModelChecker.Concrete.getResultJson ctx.instanceId | return
-    logModelCheckResult ctx.stx resultJson
+      (ownerCancelToken : IO.CancelToken) : CommandElabM Unit := do
+    try
+      let some binPath ← verifyBinaryExists buildFolder ctx.instanceId | return
+      let _ ← runBinaryAndFinish binPath ctx.parallelCfg ctx.instanceId ctx.cancelToken ctx.assertionSources ownerCancelToken
+      let some resultJson ← ModelChecker.Concrete.getResultJson ctx.instanceId | return
+      logModelCheckResult ctx.stx resultJson
+    finally
+      IO.FS.removeDirAll buildFolder
 
-  /-- Compile the model. Failure is an exception so compiled-only requests cannot silently succeed. -/
+  /-- Compile a private model project. Cancellation reaps the compiler and removes
+      its directory; failures propagate to the appropriate foreground/fallback handler. -/
   compileModel (mod : Module) (sourceFile : String) (modelSource : String)
-      (instanceId : Nat) : IO System.FilePath := do
+      (instanceId : Nat) (shouldCancel : IO Bool) : IO (Option System.FilePath) := do
+    if ← shouldCancel then return none
     let buildFolder ← ModelChecker.Compilation.createBuildFolder sourceFile modelSource mod.name.toString
-    ModelChecker.Compilation.markRegistryInProgress sourceFile instanceId buildFolder
-    let result ← ModelChecker.Compilation.runProcessWithStatusCallback
-      { cmd := "lake", args := #["build", "ModelCheckerMain"], cwd := buildFolder }
-      (fun elapsedMs => ModelChecker.Concrete.updateCompilationElapsed instanceId elapsedMs)
-      (fun line isError elapsedMs => ModelChecker.Concrete.updateCompilationLog instanceId elapsedMs line isError)
-    if result.exitCode != 0 then
-      ModelChecker.Concrete.updateCompilationStatus instanceId (.failed (mkCompilationErrorMsg result))
-      throw <| IO.userError (mkCompilationErrorMsg result)
-    ModelChecker.Concrete.updateCompilationStatus instanceId .succeeded
-    return buildFolder
+    try
+      let result ← ModelChecker.Compilation.runProcessWithStatusCallback
+        { cmd := "lake", args := #["build", "ModelCheckerMain"], cwd := buildFolder }
+        (fun elapsedMs => ModelChecker.Concrete.updateCompilationElapsed instanceId elapsedMs)
+        (fun line isError elapsedMs => ModelChecker.Concrete.updateCompilationLog instanceId elapsedMs line isError)
+        shouldCancel
+      if result.interrupted then
+        IO.FS.removeDirAll buildFolder
+        return none
+      if result.exitCode != 0 then
+        ModelChecker.Concrete.updateCompilationStatus instanceId (.failed (mkCompilationErrorMsg result))
+        throw <| IO.userError (mkCompilationErrorMsg result)
+      ModelChecker.Concrete.updateCompilationStatus instanceId .succeeded
+      return some buildFolder
+    catch e =>
+      IO.FS.removeDirAll buildFolder
+      throw e
 
   /-- Core elaboration logic shared by all model checking modes. -/
   elabModelCheckCore (stx : Syntax) (mode : ModelCheckingMode) (instTerm : Term)
@@ -1040,9 +1041,9 @@ where
 
     let compilationComputation ← Command.wrapAsyncAsSnapshot (fun () => do
       try
-        let buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
-        if ← checkCancelled ctx.cancelToken ctx.instanceId then return
-        runBinaryAndLogResult ctx buildFolder sourceFile
+        let some buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
+          (checkCancelled ctx.cancelToken ctx.instanceId) | return
+        runBinaryAndLogResult ctx buildFolder ctx.cancelToken
       catch e : Exception =>
         handleModelCheckError ctx e
     ) ctx.cancelToken
@@ -1078,10 +1079,11 @@ where
     let compilationCancelTk ← IO.CancelToken.new
     let compilationComputation ← Command.wrapAsyncAsSnapshot (fun () => do
       try
-        let buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
+        let some buildFolder ← compileModel mod sourceFile modelSource ctx.instanceId
+          (return (← compilationCancelTk.isSet) || (← ctx.cancelToken.isSet) || (← IO.hasFinished interpretedTask)) | return
         -- Skip handoff if violation found or interpreted finished
         if (← ModelChecker.Concrete.isViolationFound ctx.instanceId) || (← IO.hasFinished interpretedTask) then
-          ModelChecker.Compilation.markRegistryFinished sourceFile buildFolder
+          IO.FS.removeDirAll buildFolder
           return
         -- Handoff to compiled binary
         ModelChecker.Concrete.requestHandoff ctx.instanceId
@@ -1089,7 +1091,7 @@ where
         let _ ← IO.wait interpretedTask
         let some newCancelToken ← ModelChecker.Concrete.resetProgressForHandoff ctx.instanceId | return
         let ctxWithNewToken := { ctx with cancelToken := newCancelToken }
-        runBinaryAndLogResult ctxWithNewToken buildFolder sourceFile
+        runBinaryAndLogResult ctxWithNewToken buildFolder compilationCancelTk
       catch e : Exception =>
         ModelChecker.Concrete.updateCompilationStatus ctx.instanceId (.failed s!"{← e.toMessageData.toString}")
     ) compilationCancelTk

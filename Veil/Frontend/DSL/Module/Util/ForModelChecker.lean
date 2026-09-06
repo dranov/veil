@@ -20,39 +20,6 @@ def generateModelSourcePrefix (src : String) (commandStart commandEnd : String.P
     "\nset_option veil.__modelCheckCompileTarget true\n" ++
     String.Pos.Raw.extract src commandStart commandEnd ++ "\n"
 
-/-- Status of the model checker compilation process for a single model. -/
-inductive Status
-  | inProgress (instanceId : Nat) (buildDir : System.FilePath)
-  | finished (buildDir : System.FilePath)
-  deriving Inhabited
-
-/-- Global state tracking compilation status for multiple models.
-Keyed by the source file path (absolute path).
-Uses `Std.Mutex` to prevent race conditions when multiple tasks access the registry. -/
-initialize compilationRegistry : Std.Mutex (Std.HashMap String Status) ←
-  Std.Mutex.new {}
-
-@[inline]
-def stillCurrentCont (sourceFile : String) (instanceId : Nat) (k : Std.AtomicT (Std.HashMap String Status) IO Unit) : IO Bool :=
-  compilationRegistry.atomically fun ref => do
-    let registry ← ref.get
-    match registry[sourceFile]? with
-    | some info =>
-      match info with
-      | .inProgress id _ => if id == instanceId then k ref ; pure true else pure false
-      | _ => pure false
-    | none => pure false
-
-/-- Mark compilation as finished in the registry. -/
-def markRegistryFinished (sourceFile : String) (buildFolder : System.FilePath) : IO Unit :=
-  compilationRegistry.atomically fun ref =>
-    ref.modify fun registry => registry.insert sourceFile (.finished buildFolder)
-
-/-- Mark compilation as in progress in the registry. -/
-def markRegistryInProgress (sourceFile : String) (instanceId : Nat) (buildFolder : System.FilePath) : IO Unit :=
-  compilationRegistry.atomically fun ref =>
-    ref.modify fun registry => registry.insert sourceFile (.inProgress instanceId buildFolder)
-
 /-- Base directory for model checker build folders. This is an absolute path. -/
 def getBuildBaseDir : IO System.FilePath := do
   let pwd ← IO.currentDir
@@ -171,12 +138,6 @@ def createBuildFolder (sourceFile : String) (modelSource : String) (specNamespac
     IO.FS.writeFile (buildFolder / "lean-toolchain") toolchain
   return buildFolder
 
-/-- Update elapsed time status for a progress instance. -/
-def updateElapsedTimeStatus (instanceId : Nat) (statusPrefix : String) : IO Unit := do
-  if let some refs ← ModelChecker.Concrete.getProgressRefs instanceId then
-    let elapsed := ModelChecker.formatElapsedTime (← refs.progressRef.get).elapsedMs
-    ModelChecker.Concrete.updateStatus instanceId s!"{statusPrefix} ({elapsed})"
-
 /-- Result of running a compilation process. -/
 structure ProcessResult where
   exitCode : UInt32
@@ -185,85 +146,46 @@ structure ProcessResult where
   interrupted : Bool := false
   deriving Inhabited
 
-/-- Run a process with status updates, checking if compilation is still current or cancelled.
-    Returns the exit code, stdout, stderr, and whether it was interrupted. -/
-def runProcessWithStatus (sourceFile : String) (cfg : IO.Process.SpawnArgs)
-    (instanceId : Nat) (statusPrefix : String) (cancelToken : IO.CancelToken) : IO ProcessResult := do
-  let proc ← IO.Process.spawn { cfg with stdin := .piped, stdout := .piped, stderr := .piped }
-  -- Start reading stdout/stderr in background tasks to avoid blocking
-  let stdoutTask ← IO.asTask (prio := .dedicated) proc.stdout.readToEnd
-  let stderrTask ← IO.asTask (prio := .dedicated) proc.stderr.readToEnd
-  let waitTask ← IO.asTask (prio := .dedicated) proc.wait
-  let mut interrupted := false
-  while !(← IO.hasFinished waitTask) do
-    -- Check for explicit cancellation request
-    if ← cancelToken.isSet then
-      proc.kill
-      interrupted := true
-      break
-    -- Check if this compilation is still current (not superseded)
-    let current? ← stillCurrentCont sourceFile instanceId do
-      updateElapsedTimeStatus instanceId statusPrefix
-    unless current? do
-      proc.kill
-      interrupted := true
-      break
-    IO.sleep 100
-  let stdout ← IO.ofExcept (← IO.wait stdoutTask)
-  let stderr ← IO.ofExcept (← IO.wait stderrTask)
-  match ← IO.wait waitTask with
-  | .ok exitCode => return { exitCode, stdout, stderr, interrupted }
-  | .error err => return { exitCode := 1, stdout, stderr := s!"{stderr}\nIO error: {err}", interrupted }
-
-/-- Run a process with callbacks for status updates and line-by-line output capture.
-    - `statusCallback` is called periodically (every 500ms) with the elapsed time in ms.
-    - `lineCallback` is called for each line of output (content, isError, elapsedMs).
-    This variant does not check for cancellation - it runs to completion. -/
+/-- Run a request-owned process, draining both streams before returning. Cancellation
+kills the process group on POSIX so compiler descendants cannot keep pipes or artifacts alive. -/
 def runProcessWithStatusCallback (cfg : IO.Process.SpawnArgs)
     (statusCallback : Nat → IO Unit)
     (lineCallback : String → Bool → Nat → IO Unit := fun _ _ _ => pure ())
-    : IO ProcessResult := do
+    (shouldCancel : IO Bool := pure false) : IO ProcessResult := do
+  if ← shouldCancel then return { exitCode := 0, stdout := "", stderr := "", interrupted := true }
   let startTime ← IO.monoMsNow
-  let proc ← IO.Process.spawn { cfg with stdin := .piped, stdout := .piped, stderr := .piped }
+  let proc ← IO.Process.spawn { cfg with stdin := .piped, stdout := .piped, stderr := .piped, setsid := true }
   let stdoutAccum ← IO.mkRef ""
   let stderrAccum ← IO.mkRef ""
-  -- Helper to read lines from a handle
   let readLines (handle : IO.FS.Handle) (accum : IO.Ref String) (isError : Bool) : IO Unit := do
     while true do
       let line ← handle.getLine
       if line.isEmpty then break
       accum.modify (· ++ line)
-      lineCallback line.trimAsciiEnd.toString isError ((← IO.monoMsNow) - startTime)
+      unless ← shouldCancel do
+        lineCallback line.trimAsciiEnd.toString isError ((← IO.monoMsNow) - startTime)
   let stdoutTask ← IO.asTask (prio := .dedicated) (readLines proc.stdout stdoutAccum false)
   let stderrTask ← IO.asTask (prio := .dedicated) (readLines proc.stderr stderrAccum true)
   let waitTask ← IO.asTask (prio := .dedicated) proc.wait
-  while !(← IO.hasFinished waitTask) do
-    statusCallback ((← IO.monoMsNow) - startTime)
-    IO.sleep 500
-  let _ ← IO.wait stdoutTask
-  let _ ← IO.wait stderrTask
-  match ← IO.wait waitTask with
-  | .ok exitCode => return { exitCode, stdout := ← stdoutAccum.get, stderr := ← stderrAccum.get, interrupted := false }
-  | .error err => return { exitCode := 1, stdout := ← stdoutAccum.get, stderr := s!"{← stderrAccum.get}\nIO error: {err}", interrupted := false }
-
--- /-- Clean up all build folders older than the specified age (in milliseconds). -/
--- def cleanupOldBuildFolders (maxAgeMs : Nat := 24 * 60 * 60 * 1000) : IO Nat := do
---   let now ← IO.monoMsNow
---   let mut count := 0
---   if !(← getBuildBaseDir.pathExists) then return 0
-
---   for entry in ← getBuildBaseDir.readDir do
---     -- Check if it's a directory
---     let isDir ← entry.path.isDir
---     if isDir then
---       -- Try to parse the timestamp from the folder name (format: stem_timestamp_random)
---       let parts := entry.fileName.splitOn "_"
---       if parts.length >= 2 then
---         let timestampStr := parts[parts.length - 2]!
---         if let some timestamp := timestampStr.toNat? then
---           if now - timestamp > maxAgeMs then
---             IO.FS.removeDirAll entry.path
---             count := count + 1
---   return count
+  let mut interrupted := false
+  try
+    while !(← IO.hasFinished waitTask) do
+      if ← shouldCancel then
+        interrupted := true
+        proc.kill
+        break
+      statusCallback ((← IO.monoMsNow) - startTime)
+      IO.sleep 100
+  finally
+    -- Also reap on callback exceptions, not only on explicit cancellation.
+    unless ← IO.hasFinished waitTask do proc.kill
+    let _ ← IO.wait waitTask
+    let _ ← IO.wait stdoutTask
+    let _ ← IO.wait stderrTask
+  interrupted := interrupted || (← shouldCancel)
+  let _ ← IO.ofExcept (← IO.wait stdoutTask)
+  let _ ← IO.ofExcept (← IO.wait stderrTask)
+  let exitCode ← IO.ofExcept (← IO.wait waitTask)
+  return { exitCode, stdout := ← stdoutAccum.get, stderr := ← stderrAccum.get, interrupted }
 
 end Veil.ModelChecker.Compilation
