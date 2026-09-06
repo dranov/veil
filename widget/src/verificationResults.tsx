@@ -20,7 +20,7 @@ import {
 // ========== Types ==========
 
 import type { InductionMetadataData, StructuredJson, Counterexample, DischargerStatusFinished, Discharger, VerificationCondition, VerificationResultsProps, InsertPosition } from './protocol';
-import { getEffectiveStatus } from './verificationSelectors';
+import { getEffectiveStatus, buildAlternativeMap, proofStyle, firstCounterexample, selectWitness } from './verificationSelectors';
 
 type StatusFilter = 'all' | 'proven' | 'disproven' | 'unknown' | 'error' | 'timeout' | 'pending';
 
@@ -446,7 +446,7 @@ const useTrustOptionInserter = (documentUri: string, optionInsertPos?: InsertPos
 /** Banner shown when there are VCs that need manual proof (unknown/error status) */
 const ManualProofBanner: React.FC<{
   vcs: VerificationCondition[];
-  alternativeMap: Map<number, VerificationCondition>;
+  alternativeMap: Map<number, VerificationCondition[]>;
   documentUri: string;
   theoremInsertPos: InsertPosition;
 }> = ({ vcs, alternativeMap, documentUri, theoremInsertPos }) => {
@@ -505,11 +505,11 @@ const TrustedSmtBanner: React.FC<{
 }> = ({ vcs, documentUri, optionInsertPos }) => {
   const insertTrustOption = useTrustOptionInserter(documentUri, optionInsertPos);
   const [inserting, setInserting] = React.useState(false);
-  const count = vcs.filter(vc =>
-    isInductionVC(vc) &&
-    !vc.isDormant &&
-    vc.proofHasSorry === true
-  ).length;
+  const alternatives = buildAlternativeMap(vcs);
+  const count = filterToVisibleVCs(vcs).filter(vc => {
+    const witness = selectWitness(vc, alternatives.get(vc.id));
+    return witness.status === 'proven' && witness.proofHasSorry === true;
+  }).length;
 
   if (count === 0) return null;
 
@@ -642,20 +642,9 @@ function groupByAction(vcs: VerificationCondition[]): Map<string, VerificationCo
   return groups;
 }
 
-// Build a map from primary VC ID to its alternative VC
-function buildAlternativeMap(vcs: VerificationCondition[]): Map<number, VerificationCondition> {
-  const map = new Map<number, VerificationCondition>();
-  for (const vc of vcs) {
-    if (vc.alternativeFor != null) {
-      map.set(vc.alternativeFor, vc);
-    }
-  }
-  return map;
-}
-
 function getVisibleStatus(
   vc: VerificationCondition,
-  alternativeMap: Map<number, VerificationCondition>
+  alternativeMap: Map<number, VerificationCondition[]>
 ): VerificationCondition['status'] {
   return getEffectiveStatus(vc, alternativeMap.get(vc.id));
 }
@@ -700,257 +689,72 @@ function getFilterButtonContent(filter: StatusFilter): React.ReactNode {
 
 interface PropertyRowProps {
   vc: VerificationCondition;
-  alternativeVC?: VerificationCondition;
+  alternatives?: VerificationCondition[];
   documentUri: string;
   theoremInsertPos: InsertPosition;
   serverTime: number;
 }
 
-const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUri, theoremInsertPos, serverTime }) => {
+const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternatives = [], documentUri, theoremInsertPos, serverTime }) => {
   const [expanded, setExpanded] = React.useState(false);
-  const [showTRCounterexample, setShowTRCounterexample] = React.useState(true);
+  const [selectedCounterexampleId, setSelectedCounterexampleId] = React.useState<number>();
   const [showRawHtml, setShowRawHtml] = React.useState(false);
-  const effectiveStatus = getEffectiveStatus(vc, alternativeVC);
-
-  // Cache the last known time to prevent flickering during state transitions
-  const lastKnownTimeRef = React.useRef<number | null>(null);
-
-  // Theorem insertion
+  const effectiveStatus = getEffectiveStatus(vc, alternatives);
+  const activeVCs = [vc, ...alternatives.filter(v => !v.isDormant)];
+  const witness = selectWitness(vc, alternatives);
+  const counterexamples = activeVCs.flatMap(v => {
+    const counterexample = firstCounterexample(v);
+    return counterexample ? [{ vc: v, counterexample }] : [];
+  });
+  const selected = counterexamples.find(c => c.vc.id === selectedCounterexampleId)
+    ?? counterexamples.find(c => getInductionData(c.vc)?.style === 'tr') ?? counterexamples[0];
+  const activeCounterexample = selected?.counterexample;
   const insertTheorem = useTheoremInserter(documentUri, theoremInsertPos);
-  // Only highlight unknown/error as "needs manual proof" - disproven VCs have counterexamples and aren't provable
   const needsManualProof = isManualProofStatus(effectiveStatus);
   const hasTheoremText = !!vc.theoremText;
-  const hasTRTheoremText = !!alternativeVC?.theoremText;
-
-  const formatTime = (ms: number | null) => {
-    if (ms === null) return null;
-    if (ms < 1000) return `${ms}ms`;
-    return `${(ms / 1000).toFixed(2)}s`;
-  };
-
-  // Check if the alternative (TR) VC is running (not dormant, but no result yet)
-  const trIsRunning = alternativeVC && !alternativeVC.isDormant && alternativeVC.status === null;
-
-  // Check if the alternative (TR) VC completed (not dormant and has a result)
-  const trCompleted = alternativeVC && !alternativeVC.isDormant && alternativeVC.status !== null;
-
-  // TR was invoked means it's either running or completed
-  const trWasInvoked = trIsRunning || trCompleted;
-
-  // Get counterexample from a VC
-  const getFirstCounterexample = (targetVC: VerificationCondition): Counterexample | null => {
-    if (targetVC.status !== 'disproven') return null;
-
-    for (const discharger of targetVC.timing.dischargers) {
-      const counterexamples = discharger.result?.data?.counterexamples;
-      if (counterexamples && counterexamples.length > 0) {
-        return counterexamples[0];
-      }
+  const alternativeTheorems = alternatives.filter(v => v.theoremText);
+  const hasInteractiveAttempt = activeVCs.some(v => v.timing.dischargers.some(d => d.isInteractive));
+  const isInteractiveProven = witness.status === 'proven' && witness.timing.dischargers.some(
+    d => d.id === witness.timing.successfulDischargerId && d.isInteractive);
+  const mergeDiagnostics = (extract: (v: VerificationCondition) => ExceptionGroup[]) => {
+    const groups = new Map<string, Set<string>>();
+    for (const related of activeVCs) for (const group of extract(related)) {
+      const names = groups.get(group.message) ?? new Set<string>();
+      for (const name of group.dischargerNames) names.add(name);
+      groups.set(group.message, names);
     }
-    return null;
+    return Array.from(groups, ([message, names]) => ({message, dischargerNames: [...names].sort()}));
   };
-
-  const wpCounterexample = getFirstCounterexample(vc);
-  const trCounterexample = alternativeVC ? getFirstCounterexample(alternativeVC) : null;
-
-  // Determine which counterexample to show (prefer TR when available)
-  const hasWPCounterexample = wpCounterexample !== null;
-  const hasTRCounterexample = trCounterexample !== null;
-  const hasAnyCounterexample = hasWPCounterexample || hasTRCounterexample;
-  const hasBothCounterexamples = hasWPCounterexample && hasTRCounterexample;
-
-  const getSuccessfulDischarger = (targetVC?: VerificationCondition): Discharger | null => {
-    if (!targetVC || targetVC.status !== 'proven') return null;
-    const successfulId = targetVC.timing.successfulDischargerId;
-    if (successfulId == null) return null;
-    return targetVC.timing.dischargers.find(d => d.id === successfulId) ?? null;
-  };
-
-  const hasInteractiveDischarger = (targetVC?: VerificationCondition): boolean =>
-    targetVC?.timing.dischargers.some(d => d.isInteractive === true) === true;
-
-  const primarySuccessfulDischarger = getSuccessfulDischarger(vc);
-  const trSuccessfulDischarger = getSuccessfulDischarger(alternativeVC);
-  const isInteractiveProven =
-    primarySuccessfulDischarger?.isInteractive === true ||
-    trSuccessfulDischarger?.isInteractive === true;
-  const hasInteractiveAttempt =
-    hasInteractiveDischarger(vc) ||
-    hasInteractiveDischarger(alternativeVC);
-
-  // Default to TR counterexample if available, otherwise WP
-  const activeCounterexample = (showTRCounterexample && trCounterexample) || wpCounterexample;
-
-  // Get all exceptions from both VCs, grouped by message with discharger provenance.
-  const allExceptions = React.useMemo(() => {
-    const exceptionMap = new Map<string, Set<string>>();
-    const mergeGroups = (groups: ExceptionGroup[]) => {
-      for (const group of groups) {
-        const names = exceptionMap.get(group.message) ?? new Set<string>();
-        for (const name of group.dischargerNames) names.add(name);
-        exceptionMap.set(group.message, names);
-      }
-    };
-
-    mergeGroups(getExceptionGroupsFromVC(vc));
-    if (alternativeVC) {
-      mergeGroups(getExceptionGroupsFromVC(alternativeVC));
-    }
-    return Array.from(exceptionMap.entries()).map(([message, dischargerNames]) => ({
-      message,
-      dischargerNames: Array.from(dischargerNames).sort(),
-    }));
-  }, [vc, alternativeVC]);
+  const allExceptions = mergeDiagnostics(getExceptionGroupsFromVC);
+  const allUnknownReasons = mergeDiagnostics(getUnknownReasonGroupsFromVC);
   const hasExceptions = allExceptions.length > 0;
-
-  const allUnknownReasons = React.useMemo(() => {
-    const reasonMap = new Map<string, Set<string>>();
-    const mergeGroups = (groups: ExceptionGroup[]) => {
-      for (const group of groups) {
-        const names = reasonMap.get(group.message) ?? new Set<string>();
-        for (const name of group.dischargerNames) names.add(name);
-        reasonMap.set(group.message, names);
-      }
-    };
-
-    mergeGroups(getUnknownReasonGroupsFromVC(vc));
-    if (alternativeVC) {
-      mergeGroups(getUnknownReasonGroupsFromVC(alternativeVC));
-    }
-
-    return Array.from(reasonMap.entries()).map(([message, dischargerNames]) => ({
-      message,
-      dischargerNames: Array.from(dischargerNames).sort(),
-    }));
-  }, [vc, alternativeVC]);
   const hasUnknownReasons = allUnknownReasons.length > 0;
-
-  // Row is expandable if it has counterexamples, exceptions, or unknown reasons.
-  const isExpandable = hasAnyCounterexample || hasExceptions || hasUnknownReasons;
-
-  // Helper to check if any discharger is currently running
-  const isAnyDischargerRunning = (targetVC: VerificationCondition): boolean => {
-    return targetVC.timing.dischargers.some(d => d.status === 'running');
-  };
-
-  // Helper to compute elapsed time for a running VC
-  const getRunningElapsedTime = (targetVC: VerificationCondition): number | null => {
-    const runningDischarger = targetVC.timing.dischargers.find(
-      d => d.status === 'running' && d.startTime !== null
-    );
-    if (runningDischarger?.startTime != null) {
-      return serverTime - runningDischarger.startTime;
-    }
-    return null;
-  };
-
-  // Check if this VC is queued (pending but no dischargers running yet)
-  const isQueued =
-    effectiveStatus === null &&
-    !isAnyDischargerRunning(vc) &&
-    !hasRunningDischarger(alternativeVC);
-
-  // Format elapsed time with in-progress styling (reduced opacity)
-  const formatElapsedTime = (elapsed: number | null): React.ReactNode => {
-    if (elapsed !== null) {
-      return <span className="time-in-progress">{formatTime(elapsed)}</span>;
-    }
-    return null;
-  };
-
-  // Get elapsed time from any discharger with a startTime (regardless of status)
-  const getElapsedTimeFromAnyDischarger = (targetVC: VerificationCondition): number | null => {
-    const dischargerWithStartTime = targetVC.timing.dischargers.find(d => d.startTime !== null);
-    if (dischargerWithStartTime?.startTime != null) {
-      return serverTime - dischargerWithStartTime.startTime;
-    }
-    return null;
-  };
-
-  // Get the best available time for a VC, trying multiple sources
-  const getVCTime = (targetVC: VerificationCondition): number | null => {
-    // First try totalTime
-    if (targetVC.timing.totalTime !== null) {
-      return targetVC.timing.totalTime;
-    }
-    // Try successfulDischargerTime
-    if (targetVC.timing.successfulDischargerTime !== undefined) {
-      return targetVC.timing.successfulDischargerTime;
-    }
-    // Try to get time from finished dischargers
-    const finishedDischarger = targetVC.timing.dischargers.find(d => d.time !== null);
-    if (finishedDischarger && finishedDischarger.time !== null) {
-      return finishedDischarger.time;
-    }
-    // Fall back to elapsed time from any discharger with startTime (covers transition period)
-    return getElapsedTimeFromAnyDischarger(targetVC);
-  };
-
-  // Format the time display
-  const getTimeDisplay = (): React.ReactNode => {
-    // Helper to get time with caching - once we have a time, we keep it
-    const getTimeWithCache = (): number | null => {
-      let currentTime: number | null = null;
-
-      if (vc.status === null) {
-        // VC is running - get elapsed time
-        currentTime = getRunningElapsedTime(vc);
-      } else {
-        // VC has finished - get the best available time
-        currentTime = getVCTime(vc);
-      }
-
-      // Update cache if we have a valid time
-      if (currentTime !== null) {
-        lastKnownTimeRef.current = currentTime;
-      }
-
-      // Return current time, or fall back to cached time
-      return currentTime ?? lastKnownTimeRef.current;
-    };
-
-    const primaryTime = getTimeWithCache();
-
-    // If primary VC is still running, show elapsed time with in-progress styling
-    if (vc.status === null) {
-      return formatElapsedTime(primaryTime);
-    }
-
-    // VC has finished
-    const wpTime = formatTime(primaryTime);
-
-    if (trIsRunning) {
-      // TR is running: show WP time + elapsed TR time
-      const trElapsed = getRunningElapsedTime(alternativeVC!);
-      const trTimeDisplay = formatElapsedTime(trElapsed);
-      return wpTime && trTimeDisplay
-        ? <>{wpTime}+{trTimeDisplay}</>
-        : trTimeDisplay || wpTime;
-    }
-
-    if (trCompleted) {
-      // TR completed: show combined timing
-      const trTime = formatTime(getVCTime(alternativeVC));
-      if (wpTime && trTime) {
-        return `${wpTime}+${trTime}`;
-      }
-      return trTime || wpTime;
-    }
-
-    return wpTime;
-  };
-
-  const timeDisplay = getTimeDisplay();
+  const isExpandable = counterexamples.length > 0 || hasExceptions || hasUnknownReasons || alternativeTheorems.length > 0;
+  const isQueued = effectiveStatus === null && !activeVCs.some(hasRunningDischarger);
+  const timeDisplay = activeVCs.map(v => {
+    const running = v.timing.dischargers.find(d => d.status === 'running' && d.startTime != null);
+    const time = running?.startTime != null ? Math.max(0, serverTime - running.startTime) : v.timing.totalTime;
+    if (time == null) return null;
+    return `${proofStyle(v)} ${time < 1000 ? `${time}ms` : `${(time / 1000).toFixed(2)}s`}`;
+  }).filter(Boolean).join(' + ');
+  const counterexampleToggle = counterexamples.length > 1 && (
+    <div className="counterexample-toggle">
+      {counterexamples.map(c => <button key={c.vc.id}
+        className={`cex-toggle-btn ${selected?.vc.id === c.vc.id ? 'active' : ''}`}
+        onClick={e => { e.stopPropagation(); setSelectedCounterexampleId(c.vc.id); }}
+        title={c.vc.name}>{proofStyle(c.vc)} ({c.vc.id})</button>)}
+    </div>
+  );
 
   // Handle click on property row
   const handleRowClick = async (e: React.MouseEvent) => {
     const isCmdOrCtrl = e.metaKey || e.ctrlKey;
 
     // Cmd+Shift+click to insert TR version
-    if (isCmdOrCtrl && e.shiftKey && hasTRTheoremText) {
+    if (isCmdOrCtrl && e.shiftKey && alternativeTheorems.length > 0) {
       e.preventDefault();
       e.stopPropagation();
-      await insertTheorem(alternativeVC!.theoremText!);
+      await insertTheorem(alternativeTheorems[0].theoremText!);
       return;
     }
 
@@ -971,8 +775,8 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
   // Build tooltip text based on available actions
   const getTooltip = (): string | undefined => {
     const parts: string[] = [];
-    if (hasTheoremText) parts.push('Cmd-click to insert theorem');
-    if (hasTRTheoremText) parts.push('Cmd+Shift-click for TR version');
+    if (hasTheoremText) parts.push(`Cmd/Ctrl-click to insert ${proofStyle(vc)} theorem`);
+    if (alternativeTheorems.length > 0) parts.push(`Cmd/Ctrl+Shift-click for ${proofStyle(alternativeTheorems[0])} version`);
     return parts.length > 0 ? parts.join(', ') : undefined;
   };
 
@@ -989,11 +793,9 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
         )}
         <span className="property-icon">{isQueued ? '⏳' : getStatusIcon(effectiveStatus)}</span>
         <span className="property-name">{getInductionData(vc)?.property}</span>
-        {trWasInvoked && (
-          <span className={`vc-style-badge tr-badge ${trIsRunning ? 'tr-running' : ''}`}>
-            TR{trIsRunning && '...'}
-          </span>
-        )}
+        {activeVCs.map(v => <span key={v.id} className={`vc-style-badge ${v.status === null ? 'tr-running' : ''}`}>
+          {proofStyle(v)}{v.status === null && '...'}
+        </span>)}
         {(isInteractiveProven || hasInteractiveAttempt) && (
           <span className="vc-style-badge interactive-badge">
             Interactive
@@ -1003,6 +805,12 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
           <span className="property-time">{timeDisplay}</span>
         )}
       </div>
+      {expanded && alternativeTheorems.length > 0 && <div className="counterexample-toggle">
+        {[vc, ...alternativeTheorems].filter(v => v.theoremText).map(v =>
+          <button key={v.id} className="cex-toggle-btn" onClick={() => insertTheorem(v.theoremText!)}>
+            Insert {proofStyle(v)} theorem ({v.id})
+          </button>)}
+      </div>}
       {expanded && hasExceptions && (
         <div className="exceptions-container">
           <div className="exceptions-label">Exceptions</div>
@@ -1044,22 +852,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
                   >
                     Show raw model
                   </button>
-                  {hasBothCounterexamples && (
-                    <div className="counterexample-toggle">
-                      <button
-                        className={`cex-toggle-btn ${showTRCounterexample ? 'active' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); setShowTRCounterexample(true); }}
-                      >
-                        TR
-                      </button>
-                      <button
-                        className={`cex-toggle-btn ${!showTRCounterexample ? 'active' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); setShowTRCounterexample(false); }}
-                      >
-                        WP
-                      </button>
-                    </div>
-                  )}
+                  {counterexampleToggle}
                 </>
               }
             />
@@ -1076,22 +869,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
                       Show structured
                     </button>
                   )}
-                  {hasBothCounterexamples && (
-                    <div className="counterexample-toggle">
-                      <button
-                        className={`cex-toggle-btn ${showTRCounterexample ? 'active' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); setShowTRCounterexample(true); }}
-                      >
-                        TR
-                      </button>
-                      <button
-                        className={`cex-toggle-btn ${!showTRCounterexample ? 'active' : ''}`}
-                        onClick={(e) => { e.stopPropagation(); setShowTRCounterexample(false); }}
-                      >
-                        WP
-                      </button>
-                    </div>
-                  )}
+                  {counterexampleToggle}
                 </div>
               </div>
               <div className="counterexample-content">
@@ -1111,7 +889,7 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
 interface ActionSectionProps {
   action: string;
   vcs: VerificationCondition[];
-  alternativeMap: Map<number, VerificationCondition>;
+  alternativeMap: Map<number, VerificationCondition[]>;
   documentUri: string;
   theoremInsertPos: InsertPosition;
   serverTime: number;
@@ -1167,7 +945,7 @@ const ActionSection: React.FC<ActionSectionProps> = ({ action, vcs, alternativeM
               vc={vc}
               documentUri={documentUri}
               theoremInsertPos={theoremInsertPos}
-              alternativeVC={alternativeMap.get(vc.id)}
+              alternatives={alternativeMap.get(vc.id)}
               serverTime={serverTime}
             />
           ))}
@@ -2173,7 +1951,7 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
                           <PropertyRow
                             key={vc.id}
                             vc={vc}
-                            alternativeVC={alternativeMap.get(vc.id)}
+                            alternatives={alternativeMap.get(vc.id)}
                             documentUri={documentUri}
                             theoremInsertPos={theoremInsertPos}
                             serverTime={results.serverTime}

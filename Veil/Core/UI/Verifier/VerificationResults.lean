@@ -117,7 +117,7 @@ def statusEmoji (status : Option VCStatus) : String :=
   | none => "⏳"
 
 /-- Resolve the user-visible status for a primary VC together with any active
-TR-style alternatives. Conclusive outcomes win over sibling errors. -/
+alternatives. Conclusive outcomes win over sibling errors. -/
 private def effectiveStatusOrder : List (Option VCStatus) :=
   [some .proven, some .disproven, none, some .error, some .timeout, some .unknown]
 
@@ -253,23 +253,20 @@ private def formatCounterexampleJson (json : Json) (style : String) : MessageDat
     msg := msg ++ m!"        Post-state:\n{formatJsonObject postState "          "}\n"
   return msg
 
-/-- Extract and format counterexamples from a VCResult, including TR-style alternatives. -/
+/-- Extract and format counterexamples from a VCResult, including alternatives. -/
 private def formatCounterexamples (vc : VCResult VCMetadata SmtResult)
     (allVCs : Array (VCResult VCMetadata SmtResult)) : Option MessageData := Id.run do
   let mut msg : MessageData := m!""
   let mut hasAny := false
 
-  -- WP-style counterexample from the primary VC
-  if let some json := extractCounterexampleJson vc then
-    msg := msg ++ formatCounterexampleJson json "WP"
-    hasAny := true
-
-  -- TR-style counterexample from the alternative VC (if any)
-  let trVC? := allVCs.find? fun altVC => altVC.alternativeFor == some vc.id
-  if let some trVC := trVC? then
-    if let some json := extractCounterexampleJson trVC then
-      msg := msg ++ formatCounterexampleJson json "TR"
-      hasAny := true
+  for related in allVCs do
+    if related.id == vc.id || (related.alternativeFor == some vc.id && !related.isDormant) then
+      if let some json := extractCounterexampleJson related then
+        let style := match related.metadata with
+          | .induction metadata => (toString metadata.style).toUpper
+          | .trace _ => "Trace"
+        msg := msg ++ formatCounterexampleJson json style
+        hasAny := true
 
   if hasAny then some msg else none
 

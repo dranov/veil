@@ -3,7 +3,7 @@ import type { Html } from './htmlDisplay';
 export interface InductionMetadataData {
   stmtDerivedFrom?: string[];
   property: string;
-  kind?: 'primary' | 'alternative';
+  kind?: 'primary' | 'alternative' | 'derived';
   action: string;
   style?: 'wp' | 'tr';
 }
@@ -14,10 +14,9 @@ export interface TraceMetadataData {
   isExpectedSat: boolean;
 }
 
-export interface VCMetadata {
-  type: 'induction' | 'trace';
-  data: InductionMetadataData | TraceMetadataData;
-}
+export type VCMetadata =
+  | { type: 'induction'; data: InductionMetadataData }
+  | { type: 'trace'; data: TraceMetadataData };
 
 export interface StructuredJson {
   theory: Record<string, unknown>;
