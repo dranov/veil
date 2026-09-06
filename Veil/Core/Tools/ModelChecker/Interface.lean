@@ -50,6 +50,8 @@ inductive EarlyTerminationCondition where
   | foundViolatingState
   | deadlockOccurred
   | assertionFailed
+  /-- Check states at distances 0 through `depth`, without executing outgoing
+  actions at the boundary. Initial states have depth zero. -/
   | reachedDepthBound (depth : Nat)
   | cancelled
 deriving Inhabited, Hashable, BEq, Repr

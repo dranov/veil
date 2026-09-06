@@ -213,6 +213,12 @@ def breadthFirstSearchSequential {m : Type → Type}
   while h_not_finished : sctx.val.1.hasFinished = false do
     let sctx_val := sctx.val
     let h_sctx := sctx.property
+    if let some (item, _) := sctx_val.2.dequeue? then
+      if let some boundary := sctx_val.1.checkDepthBoundary params th item.depth
+          (fun _ => sctx_val.2.toList.map QueueItem.state) then
+        trySetViolationFound progressInstanceId boundary
+        updateProgressDuringBFS progressInstanceId boundary sctx_val.2.size
+        return (boundary, sctx_val.2)
     let oldFrontierDepth := sctx_val.1.currentFrontierDepth
     let sctx' := sctx_val.bfsStep params th sys.tr
     let h_sctx' : SequentialSearchContextInvariants sys params .none sctx' :=

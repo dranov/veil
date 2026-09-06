@@ -558,6 +558,8 @@ def breadthFirstSearchParallel {m : Type → Type}
       (MapReduceSearchContextMainInvariants.initial sys params numShards)
   let mut lastUpdateTime : Nat := 0
   let mut cancelled := false
+  let mut boundaryResult : Option (BaseSearchContext σ κ σₕ asm) := none
+  let mut fullyExpandedDepth := 0
   while h_not_finished : mctx.val.base.hasFinished = false do
     let mctxVal := mctx.val
     have h_not_finished_val : mctxVal.base.hasFinished = false := h_not_finished
@@ -573,6 +575,11 @@ def breadthFirstSearchParallel {m : Type → Type}
         (h_mctx.setExploredAll_preserves_invs h_not_finished_val h_empty)
       break
     else
+      if let some boundary := base.checkDepthBoundary params th base.currentFrontierDepth
+          (fun _ => tovisit.map MapReduceQueueItem.state) then
+        boundaryResult := some boundary
+        trySetViolationFound progressInstanceId boundary
+        break
       -- FIXME: Need to add a proper sequential fallback if the frontier is too small
       -- Split the queue into sub-lists; fall back to 1 split (sequential) if frontier is too small
       let numSplits := if tovisitLen < parallelCfg.thresholdToParallel then 1
@@ -601,9 +608,14 @@ def breadthFirstSearchParallel {m : Type → Type}
         MapReduceSearchContextMain.mergeWithLocalOnes_preserves_invs h_not_finished_val h_mctx results
       match heq : mctxVal' with
       | ⟨base', tovisitLen', tovisit', globalSeen', accLogs'⟩ =>
+        if !base'.hasFinished then fullyExpandedDepth := base.currentFrontierDepth
         trySetViolationFound progressInstanceId base'
         -- Update progress on every diameter change
-        updateProgressDuringBFS progressInstanceId base' tovisitLen' globalSeen'.size
+        updateProgressDuringBFS progressInstanceId
+          { base' with
+            completedDepth := fullyExpandedDepth
+            currentFrontierDepth := if base'.hasFinished then base.currentFrontierDepth else base'.currentFrontierDepth }
+          tovisitLen' globalSeen'.size
         -- Prove invariants are preserved using local invariants from `lawfulResults`
         mctx := Subtype.mk ⟨base', tovisitLen', tovisit', globalSeen', accLogs'⟩ (heq.symm ▸ h_mctx')
         -- Check for cancellation/handoff at most once per second
@@ -614,7 +626,8 @@ def breadthFirstSearchParallel {m : Type → Type}
         | .noUpdate => pure ()
   -- Final update to ensure stats reflect finished state
   let ⟨mctxVal, _⟩ := mctx
-  let mctxVal := { mctxVal with base := { mctxVal.base with currentFrontierDepth := mctxVal.base.completedDepth } }
+  let mctxVal := { mctxVal with base :=
+    { boundaryResult.getD mctxVal.base with completedDepth := fullyExpandedDepth } }
   updateProgressDuringBFS progressInstanceId mctxVal.base mctxVal.tovisitLen mctxVal.globalSeen.size
   -- Merge accumulated logs only if violations were found (needed for recoverTrace)
   let needsLog := !mctxVal.base.violatingStates.isEmpty ||

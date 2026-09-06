@@ -216,7 +216,7 @@ theorem partitionExecutionOutcome.fst_spec {κ σ : Type} (outcomes : List (κ �
 -- NOTE: If this function is put inside `BaseSearchContext.checkViolationsAndMaybeTerminate`,
 -- `specialize` of `List.filterMap` may not exhibit
 def checkViolationsAndMaybeTerminate
-  (completedDepth : Nat)
+  (_completedDepth : Nat)
   (hasSuccessfulTransition : Bool)
   (assertionFailures : List (Int × σ)) :
   List (σₕ × ViolationKind) × Option (EarlyTerminationReason σₕ) :=
@@ -235,11 +235,30 @@ def checkViolationsAndMaybeTerminate
 
   let earlyTermination := params.earlyTerminationConditions.findSome? fun
     | .foundViolatingState => if safetyViolation then some (.foundViolatingState fpSt safetyViolations) else none
-    | .reachedDepthBound bound => if completedDepth >= bound then some (.reachedDepthBound bound) else none
+    | .reachedDepthBound _ => none -- The controller checks the entire boundary frontier.
     | .deadlockOccurred => if deadlock then some (.deadlockOccurred fpSt) else none
     | .assertionFailed => assertionFailures.head?.map fun (exId, _) => .assertionFailed fpSt exId
     | .cancelled => none  -- Cancellation is handled externally via cancel token, not through early termination conditions
   (newViolations, earlyTermination)
+
+/-- At the depth limit, check every state predicate in the frontier without
+executing outgoing transitions. Depth counts transitions from an initial state.
+Deadlocks and action assertions need execution and are not checked at this boundary. -/
+def BaseSearchContext.checkDepthBoundary
+  (depth : Nat) (states : Unit → List σ)
+  (ctx : BaseSearchContext σ κ σₕ asm) : Option (BaseSearchContext σ κ σₕ asm) := do
+  let bound ← params.earlyTerminationConditions.filterMap (fun
+    | .reachedDepthBound n => some n
+    | _ => none) |>.min?
+  if depth < bound then none else
+    let violations := (states ()).filterMap fun st =>
+      let names := params.invariants.filterMap fun p =>
+        if p.holdsOn th st then none else some p.name
+      if names.isEmpty then none else some (fp.view st, ViolationKind.safetyFailure names)
+    some { ctx with
+      violatingStates := violations ++ ctx.violatingStates
+      finished := some (.earlyTermination (.reachedDepthBound bound))
+      currentFrontierDepth := depth }
 
 /-- Process the current state, queuing its successors. -/
 -- @[inline, specialize]

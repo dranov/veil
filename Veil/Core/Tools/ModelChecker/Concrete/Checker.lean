@@ -118,9 +118,8 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
     return ModelCheckingResult.foundViolation fingerprint .deadlock (some (← recoverTrace sys ctx fingerprint))
   | some (.earlyTermination (.assertionFailed fingerprint exId)) => do
     return ModelCheckingResult.foundViolation fingerprint (.assertionFailure exId) (some (← recoverTrace sys ctx fingerprint (some exId)))
-  | some (.earlyTermination (.reachedDepthBound _)) =>
-    -- No violation found within depth bound; report number of states explored
-    return ModelCheckingResult.noViolationFound distinctCount (.earlyTermination (.reachedDepthBound ctx.completedDepth))
+  | some (.earlyTermination (.reachedDepthBound bound)) =>
+    return ModelCheckingResult.noViolationFound distinctCount (.earlyTermination (.reachedDepthBound bound))
   | some (.earlyTermination .cancelled) =>
     -- Search was cancelled by the user
     return ModelCheckingResult.cancelled
