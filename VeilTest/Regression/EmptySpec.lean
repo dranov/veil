@@ -15,7 +15,7 @@ warning: you have not defined any actions for this specification; did you forget
 #gen_spec
 
 /--
-info: ✅ No violation (explored 1 states)
+info: ✅ No violation; explored all reachable states (1 states)
 -/
 #guard_msgs in
 #model_check interpreted {  }

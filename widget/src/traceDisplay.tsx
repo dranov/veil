@@ -1,6 +1,5 @@
 import { useWidgetShortcuts } from './useWidgetShortcuts';
 import * as React from 'react';
-import { DocumentPosition } from '@leanprover/infoview';
 import {
   ChangeInfo,
   diffChanges,
@@ -17,81 +16,12 @@ import {
   mergeTheoryWithExtras,
   InstantiationRow,
 } from './veilUtils';
-import HtmlDisplay, { Html } from './htmlDisplay';
+import HtmlDisplay from './htmlDisplay';
 
 
 // ========== Types ==========
-interface ParsedState {
-  index: number;
-  tag?: string; // Optional tag associated with this state (e.g. transition/action label)
-  fields: Record<string, unknown>;
-  failing?: boolean; // True if an assertion failed while executing the transition to this state
-}
-type Trace = ParsedState[];
-
-type ViolationKind = "assumption_failure" | "safety_failure" | "deadlock" | "assertion_failure";
-
-interface AssertionInfo {
-  procedureName: string;
-  moduleName: string;
-  line: number;
-  column: number;
-}
-
-interface Violation {
-  kind: ViolationKind;
-  violates?: string[]; // Array of violated property names (only present for safety_failure)
-  exception_id?: number; // Only present for assertion_failure
-  assertion_info?: AssertionInfo; // Only present for assertion_failure
-}
-
-interface EarlyTerminationCondition {
-  kind: "found_violating_state" | "deadlock_occurred" | "reached_depth_bound";
-  depth?: number;
-}
-
-interface TerminationReason {
-  kind: "explored_all_reachable_states" | "early_termination";
-  condition?: EarlyTerminationCondition;
-}
-
-interface TraceData {
-  theory: Record<string, unknown>;
-  states: Array<{
-    index: number;
-    fields: Record<string, unknown>;
-    transition: unknown;
-    failing?: boolean;
-  }>;
-  instantiation?: Record<string, unknown>;
-  extraVals?: Record<string, unknown>;
-}
-
-type ModelCheckingResult =
-  | {
-      result: "found_violation";
-      violation: Violation;
-      trace: TraceData | null;
-    }
-  | {
-      result: "no_violation_found";
-      explored_states: number;
-      termination_reason: TerminationReason;
-      trace?: TraceData | null;
-    }
-  | {
-      result: "cancelled";
-    }
-  | {
-      // Trace-only data without a result (for displaying execution traces)
-      trace: TraceData;
-    };
-
-interface ModelCheckerViewProps {
-  result: ModelCheckingResult;
-  layout?: "vertical" | "horizontal";
-  rawHtml?: Html;
-}
+import type { ParsedState, TraceData, ModelCheckingResult, ModelCheckerViewProps } from './protocol';
+import { resultSummary } from './resultSelectors';
 
 /* ===================== Render ===================== */
 
@@ -298,100 +228,15 @@ const TheorySection: React.FC<{ theory: Record<string, unknown> }> = ({ theory }
   return <CollapsibleFieldsSection title="Theory" fields={theory} />;
 };
 
-/** Header showing the result status with appropriate icon */
-const ResultHeader: React.FC<{
-  resultType: "found_violation" | "no_violation_found" | "cancelled";
-  violation?: Violation;
-  exploredStates?: number;
-  terminationReason?: TerminationReason;
-}> = ({ resultType, violation, exploredStates, terminationReason }) => {
-  if (resultType === "cancelled") {
-    return (
-      <div className="result-header result-cancelled">
-        <span className="result-icon">⊘</span>
-        <span className="result-label">Cancelled</span>
-        <div className="result-details">
-          Model checking was cancelled before completion
-        </div>
-      </div>
-    );
-  }
-
-  if (resultType === "found_violation" && violation) {
-    let icon: string;
-    let label: string;
-    switch (violation.kind) {
-      case "deadlock":
-        icon = "🔒";
-        label = "Deadlock Detected";
-        break;
-      case "assertion_failure":
-        icon = "💥";
-        label = "Assertion Failed";
-        break;
-      case "assumption_failure":
-        icon = "⚠️";
-        label = "Assumption Violation Found";
-        break;
-      default:
-        icon = "⚠️";
-        label = "Safety Violation Found";
-    }
-    return (
-      <div className="result-header result-violation">
-        <span className="result-icon">{icon}</span>
-        <span className="result-label">{label}</span>
-        {(violation.kind === "safety_failure" || violation.kind === "assumption_failure") && violation.violates && violation.violates.length > 0 && (
-          <div className="result-details">
-            <strong>{violation.kind === "assumption_failure" ? "Violated assumptions" : "Violated properties"}:</strong> {violation.violates.join(", ")}
-          </div>
-        )}
-        {violation.kind === "assertion_failure" && violation.assertion_info && (
-          <div className="result-details">
-            <strong>Location:</strong> {violation.assertion_info.moduleName}.{violation.assertion_info.procedureName} (line {violation.assertion_info.line}, column {violation.assertion_info.column})
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // no_violation_found
-  const getTerminationText = (reason: TerminationReason | undefined, count: number | undefined): string | null => {
-    const countSuffix = count !== undefined ? ` (explored ${count} states)` : '';
-    const countText = count !== undefined ? `Explored ${count} states` : null;
-
-    if (!reason) return countText;
-    if (reason.kind === "explored_all_reachable_states") {
-      return count !== undefined ? `Explored all reachable states (${count})` : `Explored all reachable states`;
-    }
-    if (reason.kind === "early_termination" && reason.condition) {
-      switch (reason.condition.kind) {
-        case "found_violating_state":
-          return `Stopped: found violating state${countSuffix}`;
-        case "deadlock_occurred":
-          return `Stopped: deadlock occurred${countSuffix}`;
-        case "reached_depth_bound":
-          return `Reached depth bound ${reason.condition.depth}${countSuffix}`;
-        default:
-          return `Early termination${countSuffix}`;
-      }
-    }
-    return countText;
-  };
-
-  const terminationText = getTerminationText(terminationReason, exploredStates);
-
-  return (
-    <div className="result-header result-success">
-      <span className="result-icon">✓</span>
-      <span className="result-label">No Violation Found</span>
-      {terminationText && (
-        <div className="result-details">
-          <span>{terminationText}</span>
-        </div>
-      )}
-    </div>
-  );
+/** One result interpretation shared by every header. */
+const ResultHeader: React.FC<{result: ModelCheckingResult}> = ({result}) => {
+  const summary = resultSummary(result);
+  if (!summary) return null;
+  return <div className={`result-header result-${summary.severity}`}>
+    <span className="result-icon">{summary.icon}</span>
+    <span className="result-label">{summary.label}</span>
+    {summary.details && <div className="result-details">{summary.details}</div>}
+  </div>;
 };
 
 /** Helper to convert TraceData states to ParsedState format */
@@ -718,6 +563,7 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
   }, [traceData]);
 
   const instantiation = traceData?.instantiation;
+  const initialization = 'initialization' in result ? result.initialization : undefined;
 
   return (
     <>
@@ -764,24 +610,11 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
           </div>
         ) : (
           <>
-            {'result' in result && (
-              <>
-                {result.result === "cancelled" ? (
-                  <ResultHeader resultType="cancelled" />
-                ) : result.result === "no_violation_found" ? (
-                  <ResultHeader
-                    resultType="no_violation_found"
-                    exploredStates={result.explored_states}
-                    terminationReason={result.termination_reason}
-                  />
-                ) : (
-                  <ResultHeader
-                    resultType="found_violation"
-                    violation={result.violation}
-                  />
-                )}
-              </>
-            )}
+            <ResultHeader result={result} />
+            {initialization && <>
+              <TheorySection theory={initialization.theory} />
+              <CollapsibleFieldsSection title="State at initializer failure" fields={initialization.state} />
+            </>}
 
             {instantiation && Object.keys(instantiation).length > 0 && (
               <InstantiationRow instantiation={instantiation} prefix="mc" />

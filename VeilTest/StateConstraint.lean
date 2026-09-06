@@ -39,7 +39,7 @@ state_constraint [at_most_one_active] active M ∧ active N → M = N
 -- With Fin 3 and no constraint, there would be 2^3 = 8 states.
 -- With the "at most 1 active" constraint, only 4 states are explored:
 -- {000, 100, 010, 001}
-/-- info: ✅ No violation (explored 4 states) -/
+/-- info: ✅ No violation; explored all reachable states (4 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 3 } {}
 

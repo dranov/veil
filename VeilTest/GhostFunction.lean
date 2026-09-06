@@ -43,7 +43,7 @@ safety [rank_nonneg] getRank N ≤ maxRank
 
 #gen_spec
 
-/-- info: ✅ No violation (explored 32 states) -/
+/-- info: ✅ No violation; explored all reachable states (32 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 5 } { baseRank := fun i => 2 * i }
 

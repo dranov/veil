@@ -95,10 +95,17 @@ def formatModelCheckingResult (j : Json) : MessageData :=
     let trace := j.getObjValD "trace"
     let traceMsg := if trace == .null then "" else s!"\n{formatTrace trace}"
     m!"❌ Violation: {fmtJson (v.getObjValD "kind")}{violates}{traceMsg}"
+  | "found_trace" => m!"✅ Satisfying trace found\n{formatTrace (j.getObjValD "trace")}"
   | "no_violation_found" =>
-    let trace := j.getObjValD "trace"
-    if trace != .null then m!"✅ Satisfying trace found\n{formatTrace trace}"
-    else m!"✅ No violation (explored {fmtJson (j.getObjValD "explored_states")} states)"
+    let reason := j.getObjValD "termination_reason"
+    let count := fmtJson (j.getObjValD "explored_states")
+    if reason.getObjValD "kind" == .str "explored_all_reachable_states" then
+      m!"✅ No violation; explored all reachable states ({count} states)"
+    else
+      let condition := reason.getObjValD "condition"
+      let bound := if condition.getObjValD "kind" == .str "reached_depth_bound" then
+        s!"; depth bound {fmtJson (condition.getObjValD "depth")}" else ""
+      m!"⚠️ No violation within search bounds (explored {count} states{bound}); search incomplete"
   | "cancelled" => m!"⚠️ Cancelled"
   | r => if j.getObjValD "error" != .null then m!"💥 Error: {fmtJson (j.getObjValD "error")}" else m!"Unknown: {r}"
 

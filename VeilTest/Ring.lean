@@ -68,7 +68,7 @@ The following set of actions must preserve the invariant and successfully termin
 #guard_msgs in
 #check_invariants
 
-/-- info: ✅ No violation (explored 64 states) -/
+/-- info: ✅ No violation; explored all reachable states (64 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 3 } { }
 

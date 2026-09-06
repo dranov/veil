@@ -26,7 +26,7 @@ termination true = true
 
 #gen_spec
 
-/-- info: ✅ No violation (explored 512 states) -/
+/-- info: ✅ No violation; explored all reachable states (512 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 9 } { nodeToNat := fun n => n.val }
 

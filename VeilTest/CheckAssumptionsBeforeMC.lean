@@ -36,7 +36,7 @@ invariant true
 #gen_spec
 
 -- Test 1: Valid theory without assumptions_hold_by
-/-- info: ✅ No violation (explored 2 states) -/
+/-- info: ✅ No violation; explored all reachable states (2 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 3 } { leader := fun n => n == (0 : Fin 3) }
 
@@ -46,7 +46,7 @@ invariant true
 #model_check interpreted { node := Fin 3 } { leader := fun n => n == (0 : Fin 3) || n == (1 : Fin 3) }
 
 -- Test 3: Valid theory with optional static proof tactic
-/-- info: ✅ No violation (explored 2 states) -/
+/-- info: ✅ No violation; explored all reachable states (2 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 3 } { leader := fun n => n == (0 : Fin 3) } assumptions_hold_by decide
 
@@ -78,7 +78,7 @@ invariant true
 #gen_spec
 
 -- Test 4: Valid theory proved with a custom multi-step tactic
-/-- info: ✅ No violation (explored 8 states) -/
+/-- info: ✅ No violation; explored all reachable states (8 states) -/
 #guard_msgs in
 #model_check interpreted { node := Fin 3 } { weight := fun (n : Fin 3) => n.val + 1 }
 assumptions_hold_by

@@ -110,3 +110,78 @@ export interface VerificationResultsProps {
   insertionSourceHash: string;
 }
 
+
+export interface ParsedState {
+  index: number;
+  tag?: string; // Optional tag associated with this state (e.g. transition/action label)
+  fields: Record<string, unknown>;
+  failing?: boolean; // True if an assertion failed while executing the transition to this state
+}
+export type Trace = ParsedState[];
+
+export type ViolationKind = "assumption_failure" | "safety_failure" | "deadlock" | "assertion_failure" | "initialization_failure";
+
+export interface AssertionInfo {
+  procedureName: string;
+  moduleName: string;
+  line: number;
+  column: number;
+}
+
+export interface Violation {
+  kind: ViolationKind;
+  violates?: string[]; // Array of violated property names (only present for safety_failure)
+  exception_id?: number; // Only present for assertion_failure
+  assertion_info?: AssertionInfo; // Only present for assertion_failure
+}
+
+export interface EarlyTerminationCondition {
+  kind: "found_violating_state" | "deadlock_occurred" | "reached_depth_bound";
+  depth?: number;
+}
+
+export interface TerminationReason {
+  kind: "explored_all_reachable_states" | "early_termination";
+  condition?: EarlyTerminationCondition;
+}
+
+export interface TraceData {
+  theory: Record<string, unknown>;
+  states: Array<{
+    index: number;
+    fields: Record<string, unknown>;
+    transition: unknown;
+    failing?: boolean;
+  }>;
+  instantiation?: Record<string, unknown>;
+  extraVals?: Record<string, unknown>;
+}
+
+export type ModelCheckingResult =
+  | { result: "found_trace"; trace: TraceData }
+  | { error: string }
+  | {
+      result: "found_violation";
+      violation: Violation;
+      initialization?: {theory: Record<string, unknown>; state: Record<string, unknown>};
+      trace: TraceData | null;
+    }
+  | {
+      result: "no_violation_found";
+      explored_states: number;
+      termination_reason: TerminationReason;
+      trace?: TraceData | null;
+    }
+  | {
+      result: "cancelled";
+    }
+  | {
+      // Trace-only data without a result (for displaying execution traces)
+      trace: TraceData;
+    };
+
+export interface ModelCheckerViewProps {
+  result: ModelCheckingResult;
+  layout?: "vertical" | "horizontal";
+  rawHtml?: Html;
+}

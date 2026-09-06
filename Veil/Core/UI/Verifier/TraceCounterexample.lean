@@ -390,7 +390,7 @@ unsafe def VeilTrace.toModelCheckingResultJson (vt : VeilTrace) (isExpectedSat :
   if isExpectedSat then
     -- sat trace: found a satisfying trace (success case)
     return Json.mkObj [
-      ("result", Json.str "no_violation_found"),
+      ("result", Json.str "found_trace"),
       ("trace", traceOnly)
     ]
   else
