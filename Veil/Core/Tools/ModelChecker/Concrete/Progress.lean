@@ -289,7 +289,9 @@ def updateProgressDuringBFS (ctx : BaseSearchContext σ κ σₕ asm) (qSize : N
 /-- A thin wrapper around `setViolationFound`.
     If we found a violation, mark it so handoff is prevented. -/
 def trySetViolationFound (ctx : BaseSearchContext σ κ σₕ asm) : m Unit := do
-  if let some (.earlyTermination cond) := ctx.finished then
+  if !ctx.violatingStates.isEmpty then
+    setViolationFound progressInstanceId
+  else if let some (.earlyTermination cond) := ctx.finished then
     if EarlyTerminationReason.isViolation cond then setViolationFound progressInstanceId
 
 def tryUpdateProgressWithNewFrontierDepth (oldFrontierDepth : Nat) (ctx : BaseSearchContext σ κ σₕ asm) (qSize : Nat) : m Unit := do

@@ -105,6 +105,12 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
     | none => do
       let sctx ← breadthFirstSearchSequential (σₕ := UInt64) params sys 60000 progressInstanceId cancelToken
       pure (sctx.1, sctx.1.log.size)
+  -- A stopping condition controls coverage, not the validity of evidence already found.
+  if let (fingerprint, violation) :: _ := ctx.violatingStates then
+    let assertionExId := match violation with
+      | .assertionFailure exId => some exId
+      | _ => none
+    return .foundViolation fingerprint violation (some (← recoverTrace sys ctx fingerprint assertionExId))
   match ctx.finished with
   | some (.earlyTermination (.foundViolatingState fingerprint violations)) => do
     return ModelCheckingResult.foundViolation fingerprint (.safetyFailure violations) (some (← recoverTrace sys ctx fingerprint))
@@ -119,15 +125,7 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
     -- Search was cancelled by the user
     return ModelCheckingResult.cancelled
   | some (.exploredAllReachableStates) => do
-    if !ctx.violatingStates.isEmpty then
-      let (fingerprint, violation) := ctx.violatingStates.head!
-      -- For assertion failures, pass the exception ID to recover the failing step
-      let assertionExId := match violation with
-        | .assertionFailure exId => some exId
-        | _ => none
-      return ModelCheckingResult.foundViolation fingerprint violation (some (← recoverTrace sys ctx fingerprint assertionExId))
-    else
-      return ModelCheckingResult.noViolationFound distinctCount (.exploredAllReachableStates)
+    return ModelCheckingResult.noViolationFound distinctCount (.exploredAllReachableStates)
   | none => panic! s!"SearchContext.finished is none! This should never happen."
 
 end Veil.ModelChecker.Concrete
