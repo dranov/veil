@@ -98,7 +98,7 @@ instance : ToString VeilSolver where
   toString
     | .smt => "smt"
     | .grind => "grind"
-    | .grindAndSMT => "grindAndSMT"
+    | .grindAndSMT => "grind+smt"
     | .custom => "custom"
 
 instance : Lean.KVMap.Value VeilSolver where
@@ -106,7 +106,7 @@ instance : Lean.KVMap.Value VeilSolver where
   ofDataValue?
     | .ofString "smt" => some .smt
     | .ofString "grind" => some .grind
-    | .ofString "grind+smt" => some .grindAndSMT
+    | .ofString "grind+smt" | .ofString "grindAndSMT" => some .grindAndSMT
     | .ofString "custom" => some .custom
     | _ => none
 
