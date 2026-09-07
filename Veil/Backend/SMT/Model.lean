@@ -125,6 +125,8 @@ def adaptSmtExprType (smtExpr : Expr) (expectedType : Expr)
 
   Meta.forallTelescope expectedType fun expectedArgs expectedRetTy =>
   Meta.forallTelescope smtType fun smtArgs smtRetTy => do
+    unless expectedArgs.size == smtArgs.size do
+      throwError "Cannot adapt model value: expected {expectedArgs.size} arguments, received {smtArgs.size} ({smtType})"
     let smtArgTypes ← smtArgs.mapM fun smtArg => do
       Meta.reduceAll (← Meta.inferType smtArg)
 
@@ -144,8 +146,10 @@ def adaptSmtExprType (smtExpr : Expr) (expectedType : Expr)
         -- Enum concrete type → SMT sort (typically `Fin n`)
         else if let some converted ← convertEnumToSmt? arg argTy smtArgTy enumAdapts then
           pure converted
-        else
+        else if ← Meta.isDefEq argTy smtArgTy then
           pure arg
+        else
+          throwError "Cannot adapt model argument {i}: {argTy} to {smtArgTy}"
       app := mkApp app convertedArg
 
     -- Convert return type if needed
@@ -163,6 +167,10 @@ def adaptSmtExprType (smtExpr : Expr) (expectedType : Expr)
       else
         pure app
 
-    Meta.mkLambdaFVars expectedArgs result
+    let adapted ← Meta.mkLambdaFVars expectedArgs result
+    Meta.check adapted
+    unless ← Meta.isDefEq (← Meta.inferType adapted) expectedType do
+      throwError "Cannot adapt model result from {smtType} to {expectedType}"
+    return adapted
 
 end Veil
