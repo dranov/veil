@@ -111,21 +111,29 @@ private def parseArgParam (s : String) : Option (Nat × Name) := do
 def isSpecificActionParam (name : Name) : Option (Nat × Nat × Name) := do
   let .str .anonymous s := name | none
   let afterTr ← (s.dropPrefix? "_tr").map (·.toString)
-  let [trIdxStr, rest] := afterTr.splitOn "_arg" | none
+  let trIdxStr :: restParts := afterTr.splitOn "_arg" | none
+  let rest := "_arg".intercalate restParts
   let trIdx ← parseNat? trIdxStr
   let (argIdx, paramName) ← parseArgParam rest
   return (trIdx, argIdx, paramName)
 
-/-- Check if a name matches the pattern "_tr{n}_act_{actionName}_arg{m}_{param}" and return (trIdx, actionName, argIdx, paramName).
-    For example: `_tr1_act_send_arg0_sender` → `some (1, send, 0, sender)` -/
+/-- Decode the length-prefixed action name emitted by symbolic trace elaboration.
+The action length makes `_arg` and `_act_` inside user names unambiguous. -/
 def isAnyActionParam (name : Name) : Option (Nat × Name × Nat × Name) := do
   let .str .anonymous s := name | none
   let afterTr ← (s.dropPrefix? "_tr").map (·.toString)
-  let [trIdxStr, rest] := afterTr.splitOn "_act_" | none
+  let trIdxStr :: actionParts := afterTr.splitOn "_act" | none
   let trIdx ← parseNat? trIdxStr
-  let [actNameStr, argRest] := rest.splitOn "_arg" | none
-  let (argIdx, paramName) ← parseArgParam argRest
-  return (trIdx, .mkSimple actNameStr, argIdx, paramName)
+  let actionRest := "_act".intercalate actionParts
+  let lengthStr :: restParts := actionRest.splitOn "_" | none
+  let actionLength ← parseNat? lengthStr
+  let rest := "_".intercalate restParts
+  let actNameStr := String.ofList (rest.toList.take actionLength)
+  if actNameStr.length != actionLength then none else do
+    let suffix := String.ofList (rest.toList.drop actionLength)
+    let argRest ← (suffix.dropPrefix? "_arg").map (·.toString)
+    let (argIdx, paramName) ← parseArgParam argRest
+    return (trIdx, .mkSimple actNameStr, argIdx, paramName)
 
 /-- Check if a name matches the pattern `actionTagEnumInstName.actionName` and return actionName.
     For example: `__veil_tag.send` → `some send` -/
