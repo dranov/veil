@@ -269,8 +269,6 @@ structure StateAssertion where
   extraParams : Array Parameter
   /-- Lean term for this predicate -/
   term : Term
-  /-- The sets of assertions that this assertion is in. -/
-  inSets : Std.HashSet Name
   /-- The user-written syntax that resulted in the declaration of this
   assertion. -/
   userSyntax : Syntax
@@ -398,11 +396,6 @@ structure Module where
   can still be added after this. -/
   protected _specFinalizedAt : Option Syntax := none
 
-  /-- Assertions can be grouped into "sets", which are checked
-  independently of each other. Sets are per-module. By default, all
-  assertions are added to the same set. -/
-  protected _assertionSets : Std.HashMap Name (Std.HashSet Name) := Std.HashMap.emptyWithCapacity
-
   protected _useLocalRPropTC : Bool := true
 
   /-- Per-module configuration of which concrete types to use for fields.
@@ -414,7 +407,5 @@ structure Module where
   `Module.canonicalizeExtraParams`. -/
   protected _extraParamRegistry : ExtraParamRegistry := {}
 deriving Inhabited
-
-def Module.defaultAssertionSet (mod : Module) : Name := mod.name
 
 end Veil

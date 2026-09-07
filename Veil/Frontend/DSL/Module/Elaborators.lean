@@ -556,12 +556,16 @@ def elabGhostDefinition : CommandElab := fun stx => do
     | _ => throwUnsupportedSyntax
     localEnv.modifyModule (fun _ => new_mod)
 
+/-- Keep legacy syntax recognized so unsupported isolation is diagnosed clearly. -/
+@[command_elab Veil.openIsolate, command_elab Veil.closeIsolate]
+def elabUnsupportedIsolate : CommandElab := fun stx =>
+  throwErrorAt stx "Assertion isolates are not supported. Veil checks the module's assertions together."
+
 @[command_elab Veil.assertionDeclaration]
 def elabAssertion : CommandElab := fun stx => do
   let mut mod ← getCurrentModule (errMsg := "You cannot declare an assertion outside of a Veil module!")
   mod ← mod.ensureStateIsDefined
   mod.throwIfSpecAlreadyFinalized
-  -- TODO: handle assertion sets correctly
   let assertion : StateAssertion ← match stx with
   | `(command|assumption $name:propertyName ? $prop:term) => mod.mkAssertion .assumption name prop stx
   | `(command|invariant $name:propertyName ? $prop:term) => mod.mkAssertion .invariant name prop stx
