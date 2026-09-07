@@ -1126,7 +1126,7 @@ def Module.defineProcedure (mod : Module) (pi : ProcedureInfo) (br : Option (TSy
   let actionBinders ← (← mod.declarationBaseParams (.procedure pi)).mapM (·.binder)
   let (extraParams, eDo) ← liftTermElabMWithBinders actionBinders $ fun vs => elabProcedureBody vs pi br l
   let (mod, extraParams) ← liftTermElabM $ mod.canonicalizeExtraParams extraParams
-  let ps := ProcedureSpecification.mk pi (← explicitBindersToParameters br pi.name) extraParams spec l stx
+  let ps := ProcedureSpecification.mk pi (← explicitBindersToParameters br pi.name) extraParams (.imperative l) stx
   mod.defineProcedureCore pi eDo ps true
 
 /-- When `act` is given in the transition form, `act.ext.tr` will be defined
@@ -1149,8 +1149,7 @@ def Module.defineTransition (mod : Module) (pi : ProcedureInfo) (br : Option (TS
         let body ← (Simp.dsimp #[``Transition.toVeilM]) body
         Meta.mkLambdaFVars (#[mode] ++ xs) body.expr
     instantiateMVars tmp
-  -- FIXME: How to define the `l` in `ps`? Might need to change the definition of `ProcedureSpecification`
-  let ps := ProcedureSpecification.mk pi (← explicitBindersToParameters br pi.name) extraParams .none /- this is not correct -/ ⟨t.raw⟩ stx
+  let ps := ProcedureSpecification.mk pi (← explicitBindersToParameters br pi.name) extraParams (.relational t) stx
   let _nmTr_fullyQualified ← liftTermElabM $ addVeilDefinition (toTransitionName <| toActName pi.name .external) eTr (compile := !(← isModelCheckCompileMode))
   mod.defineProcedureCore pi eDo ps false
 

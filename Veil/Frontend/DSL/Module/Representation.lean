@@ -294,6 +294,13 @@ def StateAssertion.declarationKind (sa : StateAssertion) : DeclarationKind := .s
 
 abbrev ActionSyntax := TSyntax ``Term.doSeq
 
+/-- Source bodies keep their parser category: a native transition is a term,
+not an imperative `doSeq`. `userSyntax` retains the original declaration. -/
+inductive ProcedureBody where
+  | imperative (code : ActionSyntax)
+  | relational (relation : Term)
+deriving Inhabited, BEq
+
 structure ProcedureSpecification where
   /-- Is this an `action` or a `procedure`? And what is its declaration? -/
   info : ProcedureInfo
@@ -303,10 +310,8 @@ structure ProcedureSpecification where
   /-- "Extra parameters" that are needed to make this action
   executable. -/
   extraParams : Array Parameter
-  /-- DSL expression for the specification of this action -/
-  spec : Option ActionSyntax
-  /-- DSL expression for this action -/
-  code : ActionSyntax
+  /-- The imperative or relational source for this procedure. -/
+  body : ProcedureBody
   /-- The user-written syntax that resulted in the declaration of this
   procedure. -/
   userSyntax : Syntax
