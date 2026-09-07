@@ -310,17 +310,19 @@ instance [inst : FinEncodable α] : FinmapLike α β (ArrayAsFinmap α β) where
   insert a b mp := ⟨mp.val.set (inst.equiv a) b,
     (Eq.symm (Array.size_set (xs := mp.val) (i := inst.equiv a) (v := b) (mp.prop ▸ (inst.equiv a |>.prop)))) ▸ mp.prop⟩
 
-instance [BEq α] [Hashable α] [Inhabited β] : FinmapLike α β (Std.HashMap α β) where
+-- These instances interpret maps as total functions. Keep updates canonical by
+-- erasing the implicit default; ordinary partial-map insert is unchanged.
+instance [BEq α] [Hashable α] [Inhabited β] [DecidableEq β] : FinmapLike α β (Std.HashMap α β) where
   get mp a := mp.getD a default
-  insert a b mp := mp.insert a b
+  insert a b mp := if b = default then mp.erase a else mp.insert a b
 
-instance {cmp : α → α → Ordering} [Inhabited β] : FinmapLike α β (Std.TreeMap α β cmp) where
+instance {cmp : α → α → Ordering} [Inhabited β] [DecidableEq β] : FinmapLike α β (Std.TreeMap α β cmp) where
   get mp a := mp.getD a default
-  insert a b mp := mp.insert a b
+  insert a b mp := if b = default then mp.erase a else mp.insert a b
 
-instance {cmp : α → α → Ordering} [Std.TransCmp cmp] [Inhabited β] : FinmapLike α β (Std.ExtTreeMap α β cmp) where
+instance {cmp : α → α → Ordering} [Std.TransCmp cmp] [Inhabited β] [DecidableEq β] : FinmapLike α β (Std.ExtTreeMap α β cmp) where
   get mp a := mp.getD a default
-  insert a b mp := mp.insert a b
+  insert a b mp := if b = default then mp.erase a else mp.insert a b
 
 instance [FinEncodable α] [FinEncodable β] [Inhabited β] [DecidableEq α] : LawfulFinmapLike (BitVecAsFinmap α β) where
   insert_get a a' b mp := by
@@ -373,24 +375,27 @@ instance [DecidableEq α] [inst : FinEncodable α] : LawfulFinmapLike (ArrayAsFi
     dsimp [FinmapLike.get, FinmapLike.insert]
     simp [Array.getElem_set, Fin.val_inj]
 
-instance [DecidableEq α] [Hashable α] [Inhabited β] [LawfulHashable α] : LawfulFinmapLike (Std.HashMap α β) where
+instance [DecidableEq α] [Hashable α] [Inhabited β] [DecidableEq β] [LawfulHashable α] : LawfulFinmapLike (Std.HashMap α β) where
   insert_get a a' b mp := by
     dsimp [FinmapLike.get, FinmapLike.insert]
-    rw [Std.HashMap.getD_insert] ; simp
+    by_cases h : b = default <;>
+      simp [h, Std.HashMap.getD_erase, Std.HashMap.getD_insert]
 
 instance {cmp : α → α → Ordering} [Std.LawfulEqCmp cmp] [Std.TransCmp cmp]
-  [Inhabited β] [DecidableEq α]   -- NOTE: this might be derived from `Std.LawfulEqCmp cmp`
+  [Inhabited β] [DecidableEq β] [DecidableEq α]   -- NOTE: this might be derived from `Std.LawfulEqCmp cmp`
   : LawfulFinmapLike (Std.TreeMap α β cmp) where
   insert_get a a' b mp := by
     dsimp [FinmapLike.get, FinmapLike.insert]
-    rw [Std.TreeMap.getD_insert] ; simp
+    by_cases h : b = default <;>
+      simp [h, Std.TreeMap.getD_erase, Std.TreeMap.getD_insert]
 
 instance {cmp : α → α → Ordering} [Std.LawfulEqCmp cmp] [Std.TransCmp cmp]
-  [Inhabited β] [DecidableEq α]
+  [Inhabited β] [DecidableEq β] [DecidableEq α]
   : LawfulFinmapLike (Std.ExtTreeMap α β cmp) where
   insert_get a a' b mp := by
     dsimp [FinmapLike.get, FinmapLike.insert]
-    rw [Std.ExtTreeMap.getD_insert] ; simp
+    by_cases h : b = default <;>
+      simp [h, Std.ExtTreeMap.getD_erase, Std.ExtTreeMap.getD_insert]
 
 end ConcreteInstances
 
