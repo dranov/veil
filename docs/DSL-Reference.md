@@ -433,3 +433,11 @@ unsat trace {
 ```
 
 Note that checking time grows exponentially with the trace length.
+
+### Termination predicates
+
+A module may declare at most one `termination` predicate. It permits a reachable
+state with no enabled actions to count as a valid terminal state rather than a
+deadlock; it does not prove eventual termination. If multiple conditions are
+intended, write their conjunction or disjunction explicitly in that predicate.
+A second declaration is rejected rather than silently ignored.

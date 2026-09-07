@@ -52,6 +52,8 @@ where
 
 def Module.registerAssertion [Monad m] [MonadError m] (mod : Module) (sc : StateAssertion) : m Module := do
   mod.throwIfAlreadyDeclared sc.name
+  if sc.kind == .termination && !mod.terminations.isEmpty then
+    throwErrorAt sc.userSyntax "A Veil module supports only one termination predicate. Combine the intended condition explicitly in that declaration; additional predicates were previously ignored."
   let mut mod := { mod with assertions := mod.assertions.push sc, _declarations := mod._declarations.insert sc.name sc.declarationKind }
   for set in sc.inSets do
     let currentAssertions := mod._assertionSets.getD set Std.HashSet.emptyWithCapacity
