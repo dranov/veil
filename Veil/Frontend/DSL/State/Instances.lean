@@ -192,6 +192,21 @@ instance instEnumerationForExtTreeSet [Ord α] [Veil.Enumeration α] [DecidableE
       rw [Std.ExtTreeSet.mem_ofList]
       grind
 
+/-- Choose absence or exactly one value per key. Deduplicating the input
+    enumerations avoids multiplying equivalent choices supplied by custom instances. -/
+def partialMapChoices [DecidableEq α] [DecidableEq β]
+    [ea : Enumeration α] [eb : Enumeration β] : List (α → Option β) :=
+  letI : Enumeration α := ⟨ea.allValues.dedup, fun a => List.mem_dedup.mpr (ea.complete a)⟩
+  letI : Enumeration β := ⟨eb.allValues.dedup, fun b => List.mem_dedup.mpr (eb.complete b)⟩
+  Enumeration.allValues
+
+theorem partialMapChoices_complete [DecidableEq α] [DecidableEq β]
+    [ea : Enumeration α] [eb : Enumeration β] (f : α → Option β) :
+    f ∈ partialMapChoices := by
+  letI : Enumeration α := ⟨ea.allValues.dedup, fun a => List.mem_dedup.mpr (ea.complete a)⟩
+  letI : Enumeration β := ⟨eb.allValues.dedup, fun b => List.mem_dedup.mpr (eb.complete b)⟩
+  exact Enumeration.complete f
+
 instance instEnumerationForExtTreeMap [Ord α] [Ord β]
   [DecidableEq α] [DecidableEq β]
   [Veil.Enumeration α] [Veil.Enumeration β]
@@ -200,13 +215,20 @@ instance instEnumerationForExtTreeMap [Ord α] [Ord β]
   : Veil.Enumeration (Std.ExtTreeMap α β) where
   allValues :=
     let pairs := (Veil.Enumeration.allValues (α := α × β)).dedup
-    pairs.sublists.map (Std.ExtTreeMap.ofList ·)
+    partialMapChoices.map fun f =>
+      Std.ExtTreeMap.ofList (pairs.filter fun p => f p.1 = some p.2)
   complete := by
     intro m
     rw [List.mem_map]
+    refine ⟨(fun k => m[k]?), partialMapChoices_complete _, ?_⟩
     let pairs := (Veil.Enumeration.allValues (α := α × β)).dedup
     let l := pairs.filter (· ∈ m.toList)
-    refine ⟨l, List.mem_sublists.mpr List.filter_sublist, ?_⟩
+    change Std.ExtTreeMap.ofList (pairs.filter (fun p => m[p.1]? = some p.2)) = m
+    have hentries : pairs.filter (fun p => m[p.1]? = some p.2) = l := by
+      apply List.filter_congr
+      rintro ⟨k, v⟩ _
+      simp only [Std.ExtTreeMap.mem_toList_iff_getElem?_eq_some]
+    rw [hentries]
     apply Std.ExtTreeMap.ext_getElem?
     intro k
     have hmem_toList : ∀ x ∈ l, x ∈ m.toList := fun x hx => by
