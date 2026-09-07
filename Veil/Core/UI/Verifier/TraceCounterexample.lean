@@ -38,6 +38,8 @@ open Lean Elab Meta Smt
 /-- A structured representation of a trace counterexample from an SMT model.
     This parallels `VeilModel` but for multi-step traces. -/
 structure VeilTrace where
+  /-- Explicit provenance of missing/defaulted or undecodable values. -/
+  diagnostics : Array String := #[]
   /-- Context for interpreting expressions -/
   ctx : Smt.ModelContext
 
@@ -264,6 +266,12 @@ def buildTraceFromModel (model : Model) (mod : Module) (numTransitions : Nat)
   let (stateFieldMaps, theoryFields, transitionTags, specificParams, anyActionParams, tagToAction, extraVals) ←
     classifyTraceModelValues model mod numStates
 
+  let diagnostics ← IO.mkRef <|
+    missingModelValueDiagnostics (mod.immutableComponents.map (·.name)) theoryFields "theory" ++
+    missingModelValueDiagnostics (mod.sortParams.map (·.1.name)) sortMap "instantiation"
+  for i in [:stateFieldMaps.size] do
+    diagnostics.modify (· ++ missingModelValueDiagnostics (mod.mutableComponents.map (·.name)) stateFieldMaps[i]! s!"states[{i}]")
+
   -- Build sort instantiation info
   let sortInstInfo ← (mod.sortParams.zip sortArgs).mapM fun ((sp, _), cardExpr) => do
     let typeStr ← Meta.ppExpr cardExpr
@@ -289,12 +297,21 @@ def buildTraceFromModel (model : Model) (mod : Module) (numTransitions : Nat)
   let defaultLabel := mkAppOptM ``default #[some labelType, none]
   let labelExprs ← (Array.range numTransitions).mapM fun i => do
     let trIdx := i + 1  -- Tags are 1-indexed (_tr1_tag, _tr2_tag, ...)
-    let some tagExpr := transitionTags[trIdx]? | defaultLabel
-    let some (actionName, _tagValue) ← resolveActionFromTag model.ctx tagExpr tagToAction | defaultLabel
+    let some tagExpr := transitionTags[trIdx]? | do
+      diagnostics.modify (·.push s!"defaultedMissing: transition {trIdx} tag is absent; the displayed label is a default, not a decoded action.")
+      defaultLabel
+    let some (actionName, _tagValue) ← resolveActionFromTag model.ctx tagExpr tagToAction | do
+      diagnostics.modify (·.push s!"decodeError: transition {trIdx} tag cannot be resolved; the displayed label is a default, not a decoded action.")
+      defaultLabel
+    let params := (mod.procedures.find? (·.name == actionName)).map (·.params) |>.getD #[]
+    for idx in [:params.size] do
+      if (specificParams[(trIdx, idx)]? <|> anyActionParams[(trIdx, actionName, idx)]?).isNone then
+        diagnostics.modify (·.push s!"defaultedMissing: transition {trIdx} parameter {params[idx]!.name} is absent; the displayed argument is a default, not a decoded value.")
     let some labelExpr ← buildLabelFromAction mod sortArgs actionName trIdx specificParams anyActionParams enumAdapts | defaultLabel
     pure labelExpr
 
   return {
+    diagnostics := ← diagnostics.get
     ctx := model.ctx
     sortInstInfo, sortSubst, enumAdapts
     extraSorts
@@ -319,15 +336,16 @@ def buildTraceFromModel (model : Model) (mod : Module) (numTransitions : Nat)
     ```
 -/
 unsafe def VeilTrace.toJson (vt : VeilTrace) : MetaM Json := do
+  let diagnostics ← IO.mkRef vt.diagnostics
   -- Build theory JSON
-  let theoryJson ← evalExprToJson vt.theoryType vt.theoryExpr
+  let theoryJson ← captureModelProjection diagnostics "theory" (evalExprToJson vt.theoryType vt.theoryExpr)
 
   -- Build states array
   let mut statesArr : Array Json := #[]
 
   -- First state (initial, after_init)
   if h : 0 < vt.stateExprs.size then
-    let stateJson ← evalExprToJson vt.stateType vt.stateExprs[0]
+    let stateJson ← captureModelProjection diagnostics "states[0]" (evalExprToJson vt.stateType vt.stateExprs[0])
     statesArr := statesArr.push <| Json.mkObj [
       ("index", Json.num 0),
       ("fields", stateJson),
@@ -337,10 +355,10 @@ unsafe def VeilTrace.toJson (vt : VeilTrace) : MetaM Json := do
   -- Subsequent states with their transition labels
   for i in [1:vt.stateExprs.size] do
     if hi : i < vt.stateExprs.size then
-      let stateJson ← evalExprToJson vt.stateType vt.stateExprs[i]
+      let stateJson ← captureModelProjection diagnostics s!"states[{i}]" (evalExprToJson vt.stateType vt.stateExprs[i])
       let labelIdx := i - 1
       let labelJson ← if hl : labelIdx < vt.labelExprs.size then
-        evalExprToJson vt.labelType vt.labelExprs[labelIdx]
+        captureModelProjection diagnostics s!"transition[{i}]" (evalExprToJson vt.labelType vt.labelExprs[labelIdx])
       else
         pure (Json.str "unknown")
       statesArr := statesArr.push <| Json.mkObj [
@@ -367,12 +385,15 @@ unsafe def VeilTrace.toJson (vt : VeilTrace) : MetaM Json := do
   let extraValsJson := Json.mkObj <| ← vt.extraVals.toList.mapM fun (nameExpr, valueExpr) => do
     (vt.ctx.toExprWithCtx nameExpr).runMetaM fun nameExpr => do
       let nameStr := (← Meta.ppExpr nameExpr).pretty
-      let concreteType := ((← Meta.inferType nameExpr).replaceFVars sortFVars sortTypes).replace
-        fun e => if e.isProp then some (mkConst ``Bool) else none
-      let adapted ← adaptSmtExprType valueExpr concreteType vt.enumAdapts
-      return (nameStr, ← evalExprToJson (← Meta.inferType adapted) adapted)
+      let value ← captureModelProjection diagnostics s!"extraVals.{nameStr}" do
+        let concreteType := ((← Meta.inferType nameExpr).replaceFVars sortFVars sortTypes).replace
+          fun e => if e.isProp then some (mkConst ``Bool) else none
+        let adapted ← adaptSmtExprType valueExpr concreteType vt.enumAdapts
+        evalExprToJson (← Meta.inferType adapted) adapted
+      return (nameStr, value)
 
   return Json.mkObj [
+    ("diagnostics", Lean.toJson (← diagnostics.get)),
     ("instantiation", instJson),
     ("theory", theoryJson),
     ("states", Json.arr statesArr),
@@ -398,12 +419,14 @@ unsafe def VeilTrace.toModelCheckingResultJson (vt : VeilTrace) (isExpectedSat :
   if isExpectedSat then
     -- sat trace: found a satisfying trace (success case)
     return Json.mkObj [
+      ("diagnostics", traceJson.getObjValD "diagnostics"),
       ("result", Json.str "no_violation_found"),
       ("trace", traceOnly)
     ]
   else
     -- unsat trace: found a counterexample (violation)
     return Json.mkObj [
+      ("diagnostics", traceJson.getObjValD "diagnostics"),
       ("result", Json.str "found_violation"),
       ("violation", Json.mkObj [
         ("kind", Json.str "safety_failure"),

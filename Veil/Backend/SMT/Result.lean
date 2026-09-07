@@ -62,7 +62,9 @@ def annotateSmtModel (raw : Smt.Model) (render : MetaM ProofWidgets.Html)
     (project : MetaM Json) : MetaM AnnotatedSmtModel := do
   let mut model : AnnotatedSmtModel := { raw }
   try
-    model := { model with structuredJson := ← project }
+    let structuredJson ← project
+    let diagnostics := (structuredJson.getObjValAs? (Array String) "diagnostics").toOption.getD #[]
+    model := { model with structuredJson, diagnostics }
   catch ex =>
     if ex.isInterrupt then throw ex
     model := { model with diagnostics := model.diagnostics.push s!"Structured counterexample unavailable: {← ex.toMessageData.toString}" }

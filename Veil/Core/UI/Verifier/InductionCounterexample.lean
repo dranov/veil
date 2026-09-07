@@ -31,6 +31,8 @@ open Lean Elab Meta Smt
 counterexample-to-induction (CTI). This is at the meta level (i.e. it stores
 `Expr`, which are meta/compile-time values). -/
 structure VeilCTI where
+  /-- Explicit provenance for values completed from absent model entries. -/
+  diagnostics : Array String := #[]
   /-- Context for interpreting expressions -/
   ctx : Smt.ModelContext
 
@@ -81,16 +83,17 @@ structure VeilCTI where
   stored in the `VeilModel`. -/
 
 unsafe def VeilCTI.toJson (vm : VeilCTI) : MetaM Json := do
+  let diagnostics ← IO.mkRef vm.diagnostics
   -- Build instantiation JSON from sortInstInfo (since Type fields are erased at runtime)
   let instJson := Json.mkObj <| vm.sortInstInfo.toList.map fun (name, typeStr) =>
     (name.toString, Json.str typeStr)
-  let theoryJson ← evalExprToJson vm.theoryType vm.theoryExpr
-  let preStateJson ← evalExprToJson vm.stateType vm.preStateExpr
+  let theoryJson ← captureModelProjection diagnostics "theory" (evalExprToJson vm.theoryType vm.theoryExpr)
+  let preStateJson ← captureModelProjection diagnostics "preState" (evalExprToJson vm.stateType vm.preStateExpr)
   let postStateJson ← match vm.postStateExpr with
-    | some e => evalExprToJson vm.stateType e
+    | some e => captureModelProjection diagnostics "postState" (evalExprToJson vm.stateType e)
     | none => pure Json.null
   let labelJson ← match vm.labelExpr, vm.labelType with
-    | some labelExpr, some labelType => evalExprToJson labelType labelExpr
+    | some labelExpr, some labelType => captureModelProjection diagnostics "label" (evalExprToJson labelType labelExpr)
     | _, _ => pure (Json.str "initializer")
 
   -- Build extraSorts JSON: map from sort name to cardinality type (similar to instJson)
@@ -107,12 +110,15 @@ unsafe def VeilCTI.toJson (vm : VeilCTI) : MetaM Json := do
   let extraValsJson := Json.mkObj <| ← vm.extraVals.toList.mapM fun (nameExpr, valueExpr) => do
     (vm.ctx.toExprWithCtx nameExpr).runMetaM fun nameExpr => do
       let nameStr := (← Meta.ppExpr nameExpr).pretty
-      let concreteType := ((← Meta.inferType nameExpr).replaceFVars sortFVars sortTypes).replace
-        fun e => if e.isProp then some (mkConst ``Bool) else none
-      let adapted ← adaptSmtExprType valueExpr concreteType vm.enumAdapts
-      return (nameStr, ← evalExprToJson (← Meta.inferType adapted) adapted)
+      let value ← captureModelProjection diagnostics s!"extraVals.{nameStr}" do
+        let concreteType := ((← Meta.inferType nameExpr).replaceFVars sortFVars sortTypes).replace
+          fun e => if e.isProp then some (mkConst ``Bool) else none
+        let adapted ← adaptSmtExprType valueExpr concreteType vm.enumAdapts
+        evalExprToJson (← Meta.inferType adapted) adapted
+      return (nameStr, value)
 
   return Json.mkObj [
+    ("diagnostics", Lean.toJson (← diagnostics.get)),
     ("instantiation", instJson),
     ("theory", theoryJson),
     ("preState", preStateJson),
@@ -428,6 +434,12 @@ def buildCounterexampleExprs (model : Model) (mod : Module) (actionName : Name) 
   let (preStateFields, postStateFields, theoryFields, actionParams, extraVals) ←
     classifyModelValues model mod actionName
 
+  let diagnostics := missingModelValueDiagnostics (mod.mutableComponents.map (·.name)) preStateFields "preState" ++
+    (if postStateFields.isEmpty then #[] else missingModelValueDiagnostics (mod.mutableComponents.map (·.name)) postStateFields "postState") ++
+    missingModelValueDiagnostics (mod.immutableComponents.map (·.name)) theoryFields "theory" ++
+    missingModelValueDiagnostics (mod.sortParams.map (·.1.name)) sortMap "instantiation" ++
+    missingModelValueDiagnostics ((mod.procedures.find? (·.name == actionName)).map (·.params.map (·.name)) |>.getD #[]) actionParams "label"
+
   -- Build Instantiation expression and type
   let instExpr ← buildInstantiationExpr mod sortArgs
   let instType := mkConst (mod.name ++ `Instantiation)
@@ -463,6 +475,7 @@ def buildCounterexampleExprs (model : Model) (mod : Module) (actionName : Name) 
   -- dbg_trace "labelExpr: {← match labelExpr with | some e => ppExpr e | none => pure "none"} | labelType: {← match labelType with | some t => ppExpr t | none => pure "none"}"
 
   return {
+    diagnostics
     instExpr, instType, sortInstInfo, sortSubst, enumAdapts
     theoryExpr, theoryType
     preStateExpr, stateType

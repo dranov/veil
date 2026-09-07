@@ -54,6 +54,22 @@ unsafe def evalExprToJson (typeExpr : Expr) (valueExpr : Expr) : MetaM Json := d
   let jsonExpr ← Meta.mkAppOptM ``toJson #[some typeExpr, some toJsonInst, some valueExpr]
   return losslessModelJson (← Meta.evalExpr Json (mkConst ``Json) jsonExpr)
 
+/-- Missing model entries are default-completed, not evidence of the displayed value.
+We cannot infer whether the solver omitted them because they were unconstrained. -/
+def missingModelValueDiagnostics (names : Array Name) (values : Std.HashMap Name Expr)
+    (pathPrefix : String) : Array String :=
+  names.filterMap fun name => if values.contains name then none else
+    some s!"defaultedMissing: {pathPrefix}.{name} is absent from the solver model; the displayed value is a default, not a decoded model value."
+
+/-- Keep independent structured sections when a custom serializer is unsupported. -/
+def captureModelProjection (diagnostics : IO.Ref (Array String)) (path : String)
+    (project : MetaM Json) : MetaM Json := do
+  try project catch ex =>
+    if ex.isInterrupt then throw ex
+    let message := s!"decodeError: {path}: {← ex.toMessageData.toString}"
+    diagnostics.modify (·.push message)
+    return Json.mkObj [("$veilUnavailable", .str message)]
+
 /-- Extract a Nat value from a Fin expression.
     Handles `OfNat.ofNat α n inst` and `Fin.mk bound val proof` forms. -/
 def extractFinValue (ctx : ModelContext) (e : Expr) : IO (Option Nat) :=
