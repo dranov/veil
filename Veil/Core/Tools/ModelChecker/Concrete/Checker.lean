@@ -11,19 +11,26 @@ that contains fingerprint-based state references. -/
 /-- Walk backward through the log to build a fingerprint-based path from a
 state to an initial state. Returns `(initialStateFingerprint, steps)` where
 each step has the transition label and the fingerprint of the post-state. -/
-partial def retraceSteps [BEq σₕ] [Hashable σₕ]
+def retraceSteps [BEq σₕ] [Hashable σₕ]
   (log : Std.HashMap σₕ (Option (σₕ × κ))) (cur : σₕ)
-  (acc : List (Step σₕ κ) := []) : σₕ × List (Step σₕ κ) :=
-  match log[cur]? with
-  | some (some (prev, label)) =>
-    retraceSteps log prev ({ transitionLabel := label, nextState := cur } :: acc)
-  | _ => (cur, acc)
+  (acc : List (Step σₕ κ) := []) : Except String (σₕ × List (Step σₕ κ)) :=
+  walk (log.size + 1) cur acc
+where
+  -- A finite parent chain cannot visit more entries than the log contains.
+  walk : Nat → σₕ → List (Step σₕ κ) → Except String (σₕ × List (Step σₕ κ))
+    | 0, _, _ => .error "Trace recovery failed: cyclic parent log"
+    | fuel + 1, current, steps =>
+      match log[current]? with
+      | some (some (prev, label)) =>
+        walk fuel prev ({ transitionLabel := label, nextState := current } :: steps)
+      | some none => .ok (current, steps)
+      | none => .error "Trace recovery failed: missing parent-log entry"
 
-/-- Find a full state from a list that matches a given fingerprint. -/
+/-- Find a concrete state with the requested fingerprint; absence is explicit. -/
 @[inline, specialize]
 def findByFingerprint [fp : StateFingerprint σ σₕ]
-  (states : List σ) (targetFp : σₕ) (fallback : σ) : σ :=
-  states.find? (fun s => fp.view s == targetFp) |>.getD fallback
+  (states : List σ) (targetFp : σₕ) : Option σ :=
+  states.find? (fun s => fp.view s == targetFp)
 
 /-- Reconstruct a full trace with concrete states from a SearchContext.
 This re-executes transitions to recover full state objects from fingerprints.
@@ -43,11 +50,12 @@ def recoverTrace {ρ σ κ σₕ asm : Type} {m : Type → Type}
   (assertionFailureExId : Option Int := none)
   : m (Trace ρ σ κ) := do
   -- Retrace steps from the target fingerprint back to an initial state
-  let (initFp, stepsFp) := retraceSteps ctx.log targetFingerprint
+  let (initFp, stepsFp) ← IO.ofExcept (retraceSteps ctx.log targetFingerprint)
   -- Recover initial state by matching fingerprint
-  let initialState := findByFingerprint sys.initStates initFp default
+  let initialState ← match findByFingerprint sys.initStates initFp with
+    | some st => pure st
+    | none => IO.ofExcept <| Except.error "Trace recovery failed: initial fingerprint has no initial state"
   -- Recover trace steps by re-executing transitions and matching fingerprints
-  -- FIXME: Ideally, this should never fail, due to the proof we have ...
   let mut curSt := initialState
   let mut steps : Steps σ κ := #[]
   for step in stepsFp do
@@ -60,14 +68,44 @@ def recoverTrace {ρ σ κ σₕ asm : Type} {m : Type → Type}
       | none => IO.ofExcept <| Except.error s!"Could not recover transition from fingerprint {repr (fp.view curSt)} to {repr step.nextState}!"
     curSt := nextSt
     steps := steps.push { transitionLabel := transitionLabel, nextState := nextSt }
-  return { theory := th, initialState := initialState, steps := steps, failingStep := findFailingStep curSt assertionFailureExId }
-where
-  findFailingStep (st : σ) : Option Int → Option (Step σ κ)
+  let failingStep : Option (Step σ κ) ← match assertionFailureExId with
+    | none => pure none
     | some exId =>
-      match (sys.tr th st).find? (·.2.exceptionId? == some exId) with
-      | some (label, .assertionFailure _ failState) => some { transitionLabel := label, nextState := failState }
-      | _ => none
-    | none => none
+      match (sys.tr th curSt).find? (·.2.exceptionId? == some exId) with
+      | some (label, .assertionFailure _ failState) =>
+        pure (some { transitionLabel := label, nextState := failState })
+      | _ => IO.ofExcept <| Except.error "Trace recovery failed: reported assertion failure cannot be replayed"
+  return { theory := th, initialState, steps, failingStep }
+
+/-- Replay a witness and check that its endpoint exhibits the reported violation.
+Fingerprint matches alone do not validate a counterexample: colliding states may
+follow a different executable path. Labels come from the replayed transitions,
+so equivalent alternative labels are accepted. This does not establish completeness
+of fingerprint-based exploration. -/
+def recoverViolationTrace {ρ σ κ σₕ asm : Type} {m : Type → Type}
+  [Monad m] [MonadLiftT BaseIO m] [MonadLiftT IO m]
+  [fp : StateFingerprint σ σₕ] [Inhabited σ] [Repr σₕ]
+  [ActionStatUpdate κ asm] {th : ρ}
+  (sys : EnumerableTransitionSystem ρ (List ρ) σ (List σ) Int κ (List (κ × ExecutionOutcome Int σ)) th)
+  (params : SearchParameters ρ σ) (ctx : BaseSearchContext σ κ σₕ asm)
+  (targetFingerprint : σₕ) (violation : ViolationKind) : m (Trace ρ σ κ) := do
+  let assertionId := match violation with
+    | .assertionFailure id => some id
+    | _ => none
+  let trace ← recoverTrace sys ctx targetFingerprint assertionId
+  let valid := match violation with
+    | .safetyFailure names =>
+      !names.isEmpty && names.all fun name => params.invariants.any fun inv =>
+        inv.name == name && !inv.holdsOn th trace.lastState
+    | .deadlock =>
+      (partitionExecutionOutcome (sys.tr th trace.lastState)).1.isEmpty &&
+        !params.terminating.holdsOn th trace.lastState
+    | .assertionFailure _ => trace.failingStep.isSome
+    | .assumptionFailure _ => false
+  unless valid do
+    IO.ofExcept <| Except.error
+      "Trace recovery failed: replayed endpoint does not exhibit the reported violation (possible fingerprint collision)"
+  return trace
 
 /-! ## Model Checker
 
@@ -107,11 +145,11 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
       pure (sctx.1, sctx.1.log.size)
   match ctx.finished with
   | some (.earlyTermination (.foundViolatingState fingerprint violations)) => do
-    return ModelCheckingResult.foundViolation fingerprint (.safetyFailure violations) (some (← recoverTrace sys ctx fingerprint))
+    return ModelCheckingResult.foundViolation fingerprint (.safetyFailure violations) (some (← recoverViolationTrace sys params ctx fingerprint (.safetyFailure violations)))
   | some (.earlyTermination (.deadlockOccurred fingerprint)) => do
-    return ModelCheckingResult.foundViolation fingerprint .deadlock (some (← recoverTrace sys ctx fingerprint))
+    return ModelCheckingResult.foundViolation fingerprint .deadlock (some (← recoverViolationTrace sys params ctx fingerprint .deadlock))
   | some (.earlyTermination (.assertionFailed fingerprint exId)) => do
-    return ModelCheckingResult.foundViolation fingerprint (.assertionFailure exId) (some (← recoverTrace sys ctx fingerprint (some exId)))
+    return ModelCheckingResult.foundViolation fingerprint (.assertionFailure exId) (some (← recoverViolationTrace sys params ctx fingerprint (.assertionFailure exId)))
   | some (.earlyTermination (.reachedDepthBound _)) =>
     -- No violation found within depth bound; report number of states explored
     return ModelCheckingResult.noViolationFound distinctCount (.earlyTermination (.reachedDepthBound ctx.completedDepth))
@@ -121,11 +159,8 @@ def findReachable {ρ σ κ : Type} {m : Type → Type}
   | some (.exploredAllReachableStates) => do
     if !ctx.violatingStates.isEmpty then
       let (fingerprint, violation) := ctx.violatingStates.head!
-      -- For assertion failures, pass the exception ID to recover the failing step
-      let assertionExId := match violation with
-        | .assertionFailure exId => some exId
-        | _ => none
-      return ModelCheckingResult.foundViolation fingerprint violation (some (← recoverTrace sys ctx fingerprint assertionExId))
+      return ModelCheckingResult.foundViolation fingerprint violation
+        (some (← recoverViolationTrace sys params ctx fingerprint violation))
     else
       return ModelCheckingResult.noViolationFound distinctCount (.exploredAllReachableStates)
   | none => panic! s!"SearchContext.finished is none! This should never happen."
