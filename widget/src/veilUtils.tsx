@@ -233,6 +233,14 @@ export function dequalify(s: string): string {
   return cleaned.join(" ");
 }
 
+/** Decimal integer encoded by Lean without JavaScript numeric rounding. */
+export function exactIntegerDecimal(value: unknown): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const object = value as Record<string, unknown>;
+  if (Object.keys(object).length !== 1 || typeof object.$veilInteger !== 'string') return undefined;
+  return /^-?(0|[1-9][0-9]*)$/.test(object.$veilInteger) ? object.$veilInteger : undefined;
+}
+
 /** Format an action/label object like {"recv": {"sender": 2}} into "recv(sender = 2)" */
 export function formatActionLabel(label: unknown): string {
   if (typeof label === "string") {
@@ -255,6 +263,8 @@ export function formatActionLabel(label: unknown): string {
         const argKeys = Object.keys(argObj);
         if (argKeys.length > 0) {
           const formatValue = (v: unknown): string => {
+            const exact = exactIntegerDecimal(v);
+            if (exact !== undefined) return exact;
             if (typeof v === "string") return v;
             if (typeof v === "number" || typeof v === "boolean") return String(v);
             return JSON.stringify(v);
@@ -277,6 +287,8 @@ export function formatActionLabel(label: unknown): string {
 
 /** Render any value inline (arrays as [a, b, ...]) */
 export function renderValueInline(x: unknown): React.ReactNode {
+  const exact = exactIntegerDecimal(x);
+  if (exact !== undefined) return <code>{exact}</code>;
   if (Array.isArray(x)) {
     const elements = x.map((el, i) => <span key={i}>{renderValueInline(el)}</span>);
     return <code>[{joinNodes(elements)}]</code>;
@@ -341,6 +353,8 @@ export function renderRowFromInnerArray(e: unknown, status?: 'unchanged' | 'adde
 
 /** Render a value with optional diff highlighting via mergedView */
 export function renderValue(v: unknown, mergedView?: MergedElement[]): React.ReactNode {
+  const exact = exactIntegerDecimal(v);
+  if (exact !== undefined) return <code>{exact}</code>;
   if (Array.isArray(v)) {
     if (v.length === 0 && (!mergedView || mergedView.length === 0)) {
       return <code>[]</code>;
