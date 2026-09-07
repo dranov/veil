@@ -55,17 +55,11 @@ def longestCommonArraySuffixSize [BEq α] (xs ys : Array α) : Nat := Id.run do
       break
   return n
 
-/-- Like `mkLambdaFVars xs body`, but first performs eta reduction for the
-longest suffix of `xs` that occurs as the trailing arguments of `body`.
-
-For example, given `xs = #[x, y]` and `body = f a x y`, this returns
-`f a`. Given `body = f a x y z`, no suffix matches and the result is
-`fun x y => f a x y z`. -/
-def Lean.Meta.mkLambdaFVarsWithAppSuffixEta (xs : Array Expr) (body : Expr) : MetaM Expr := body.withApp fun f args => do
-  let n := longestCommonArraySuffixSize xs args
-  let xs := xs.extract 0 (xs.size - n)
-  let args := args.extract 0 (args.size - n)
-  mkLambdaFVars xs (mkAppN f args)
+/-- Like `mkLambdaFVars xs body`, with Lean's dependency-safe eta reduction.
+Binders are abstracted before reduction, so a matching final argument is not
+removed when it also occurs in the function or earlier arguments. -/
+def Lean.Meta.mkLambdaFVarsWithAppSuffixEta (xs : Array Expr) (body : Expr) : MetaM Expr :=
+  mkLambdaFVars xs body (etaReduce := true)
 
 def Lean.Elab.Attribute.mkStx [Monad m] [MonadQuotation m] (attr : Attribute) : m (TSyntax `Lean.Parser.Term.attrInstance) := do
   let kindStx ← match attr.kind with
