@@ -537,18 +537,8 @@ def elabTransition : CommandElab := fun stx => do
     localEnv.modifyModule (fun _ => new_mod)
 
 @[command_elab Veil.procedureDefinitionWithSpec]
-def elabProcedureWithSpec : CommandElab := fun stx => do
-  let nm := extractDefinitionName stx
-  -- Use dynamic trace class name that includes the action name
-  withTraceNode (`veil.perf.elaborator.actionWithSpec ++ nm) (fun _ => return s!"action+spec {nm}") do
-    let mut mod ← getCurrentModule (errMsg := "You cannot elaborate an action outside of a Veil module!")
-    mod ← mod.ensureStateIsDefined
-    mod.throwIfSpecAlreadyFinalized
-    let new_mod ← match stx with
-    | `(command|action $nm:ident $br:explicitBinders ? $spec:doSeq {$l:doSeq}) => mod.defineProcedure (ProcedureInfo.action nm.getId) br spec l stx
-    | `(command|procedure $nm:ident $br:explicitBinders ? $spec:doSeq {$l:doSeq}) => mod.defineProcedure (ProcedureInfo.procedure nm.getId) br spec l stx
-    | _ => throwUnsupportedSyntax
-    localEnv.modifyModule (fun _ => new_mod)
+def elabProcedureWithSpec : CommandElab := fun stx =>
+  throwErrorAt stx "Declaration-level action and procedure contracts are not supported. Put require/assert statements inside the body; contract blocks were previously ignored."
 
 @[command_elab Veil.ghostRelationDefinition, command_elab Veil.ghostFunctionDefinition]
 def elabGhostDefinition : CommandElab := fun stx => do

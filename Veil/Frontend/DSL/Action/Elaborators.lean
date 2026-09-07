@@ -1120,6 +1120,8 @@ def Module.defineProcedureCore (mod : Module) (pi : ProcedureInfo)
     return mod
 
 def Module.defineProcedure (mod : Module) (pi : ProcedureInfo) (br : Option (TSyntax ``Lean.explicitBinders)) (spec : Option ActionSyntax) (l : ActionSyntax) (stx : Syntax) : CommandElabM Module := do
+  if spec.isSome then
+    throwErrorAt stx "Declaration-level action and procedure contracts are not supported. Put require/assert statements inside the body; contract blocks were previously ignored."
   -- Obtain `extraParams` so we can register the action
   let actionBinders ← (← mod.declarationBaseParams (.procedure pi)).mapM (·.binder)
   let (extraParams, eDo) ← liftTermElabMWithBinders actionBinders $ fun vs => elabProcedureBody vs pi br l
