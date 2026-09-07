@@ -214,25 +214,6 @@ export const CopyButton: React.FC<{ text: string; className?: string }> = ({ tex
 
 // ========== String Helpers ==========
 
-/** Remove namespace prefixes like A.B.C, keeping only the last segment */
-export function dequalify(s: string): string {
-  const parts = s.trim().split(/\s+/);
-
-  const cleaned = parts
-    .map((tok) => {
-      let t = tok.replace(/^[()\[\]{}:,]+|[()\[\]{}:,]+$/g, "");
-      if (/^-?\d+(?:\.\d+)?$/.test(t)) return t;
-      if (t.includes(".")) {
-        const segs = t.split(".");
-        t = segs[segs.length - 1] || t;
-      }
-      return t;
-    })
-    .filter((t) => t.length > 0);
-
-  return cleaned.join(" ");
-}
-
 /** Decimal integer encoded by Lean without JavaScript numeric rounding. */
 export function exactIntegerDecimal(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -297,7 +278,7 @@ export function renderValueInline(x: unknown): React.ReactNode {
     return <code>{JSON.stringify(x)}</code>;
   }
   if (typeof x === 'string') {
-    return <code>{dequalify(x)}</code>;
+    return <code>{x}</code>;
   }
   return <code>{String(x)}</code>;
 }
@@ -395,7 +376,7 @@ export function renderValue(v: unknown, mergedView?: MergedElement[]): React.Rea
   }
 
   if (typeof v === 'string') {
-    return <code>{dequalify(v)}</code>;
+    return <code>{v}</code>;
   }
 
   return <code>{String(v)}</code>;

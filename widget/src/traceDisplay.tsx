@@ -6,7 +6,6 @@ import {
   CopyButton,
   formatActionLabel,
   renderValue,
-  dequalify,
   sharedDiffCSS,
   sharedListCSS,
   generateFilterPanelCSS,
@@ -116,9 +115,7 @@ function previewValue(v: unknown): string {
     }
   }
   if (typeof v === "string") {
-    const dq = dequalify(v);
-    const s = dq.replace(/\s+/g, " ");
-    return s.length > 80 ? s.slice(0, 80) + "…" : s;
+    return v.length > 80 ? v.slice(0, 80) + "…" : v;
   }
   return String(v);
 }
