@@ -253,7 +253,7 @@ private def extractTraceJson? (result : Option (DischargerResult SmtResult)) : O
   match result with
   | some (.proven _ (some (.sat counterexamples)) _)
   | some (.disproven (some (.sat counterexamples)) _) =>
-    counterexamples.findSome? fun ce? => ce?.map (·.structuredJson)
+    counterexamples.findSome? fun ce? => ce?.bind (fun ce => if ce.structuredJson == .null then none else some ce.structuredJson)
   | _ => none
 
 /-- Extract structured JSON trace and raw HTML from a discharger result (if SAT). -/
@@ -261,7 +261,7 @@ private def extractTraceData? (result : Option (DischargerResult SmtResult)) : O
   match result with
   | some (.proven _ (some (.sat counterexamples)) _)
   | some (.disproven (some (.sat counterexamples)) _) =>
-    counterexamples.findSome? fun ce? => ce?.map (fun ce => (ce.structuredJson, some ce.rawHtml))
+    counterexamples.findSome? fun ce? => ce?.bind (fun ce => if ce.structuredJson == .null then none else some (ce.structuredJson, ce.rawHtml))
   | _ => none
 
 /-- Log all errors from discharger results. -/
@@ -269,6 +269,12 @@ private def logDischargerErrors (dischargers : Array (DischargerResultData SmtRe
   for d in dischargers do
     if let some (.error exs _) := d.result then
       for (ex, _) in exs do logError ex.toMessageData
+    let models := match d.result with
+      | some (.proven _ (some (.sat models)) _) | some (.disproven (some (.sat models)) _) => models
+      | _ => #[]
+    for model in models.filterMap id do
+      for diagnostic in model.diagnostics do logWarning diagnostic
+      if model.structuredJson == .null then logInfo model.rawText
 
 /-- Extract trace JSON from a VCResult's discharger results. -/
 private def extractTraceJsonFromVC (vcResult : VCResult VCMetadata SmtResult) : Option Json :=

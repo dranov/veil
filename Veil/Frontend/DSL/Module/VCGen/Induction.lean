@@ -29,14 +29,10 @@ private def overallSmtResult [Monad m] [MonadEnv m] [MonadError m] [MonadLiftT B
     [MonadLiftT MetaM m] (actName : Name) (outputs : Array SmtOutput) : m (Option SmtResult) := do
   let mod ← getCurrentModule
   buildSmtResult outputs (fun sat => do
-    sat.filterMapM (fun ce => return ← ce.mapM (fun ce => do
-      try
+    sat.mapM (fun ce? => ce?.mapM fun ce =>
+      annotateSmtModel ce (renderSmtModel ce) (do
         let veilModel ← buildCounterexampleExprs ce mod actName
-        let structuredJson : Json ← unsafe veilModel.toJson
-        return .some { raw := ce, rawHtml := ← renderSmtModel ce, structuredJson := structuredJson }
-      catch ex =>
-        dbg_trace "Failed to build counterexample; exception: {← ex.toMessageData.toString}"
-        return none)))
+        unsafe veilModel.toJson)))
 
 /-- Create a DischargerResult from SMT outputs for inductive VCs. -/
 private def mkDischargerResult [Monad m] [MonadEnv m] [MonadError m] [MonadLiftT BaseIO m]

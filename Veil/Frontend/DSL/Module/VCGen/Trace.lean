@@ -30,16 +30,10 @@ private def overallSmtResultForTrace [Monad m] [MonadEnv m] [MonadError m] [Mona
     (outputs : Array SmtOutput) : m (Option SmtResult) := do
   let mod ← getCurrentModule
   buildSmtResult outputs (fun sat => do
-    sat.filterMapM (fun ce => return ← ce.mapM (fun ce => do
-      try
-        -- Build trace from model instead of single-step counterexample
+    sat.mapM (fun ce? => ce?.mapM fun ce =>
+      annotateSmtModel ce (renderSmtModel ce) (do
         let veilTrace ← buildTraceFromModel ce mod numTransitions
-        -- Convert to ModelCheckingResult-like JSON for TraceDisplayViewer
-        let structuredJson : Json ← unsafe veilTrace.toModelCheckingResultJson isExpectedSat
-        return .some { raw := ce, rawHtml := ← renderSmtModel ce, structuredJson := structuredJson }
-      catch ex =>
-        dbg_trace "Failed to build trace counterexample; exception: {← ex.toMessageData.toString}"
-        return none)))
+        unsafe veilTrace.toModelCheckingResultJson isExpectedSat)))
 
 /-! ## Trace Discharger -/
 

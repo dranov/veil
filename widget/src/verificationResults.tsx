@@ -51,7 +51,9 @@ interface StructuredJson {
 interface Counterexample {
   model?: any;
   structuredJson?: StructuredJson;
-  html: Html | string;  // Can be either structured Html or raw HTML string
+  rawText?: string;
+  diagnostics?: string[];
+  html: Html | string | null;  // Can be either structured Html or raw HTML string
 }
 
 interface DischargerResultData {
@@ -1166,6 +1168,9 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
       )}
       {expanded && activeCounterexample && (
         <div className="counterexample-container">
+          {activeCounterexample.diagnostics?.map((diagnostic, i) => (
+            <p role="status" key={i}>{diagnostic}</p>
+          ))}
           {activeCounterexample.structuredJson && !showRawHtml ? (
             <StructuredCexView
               data={activeCounterexample.structuredJson}
@@ -1230,7 +1235,9 @@ const PropertyRow: React.FC<PropertyRowProps> = ({ vc, alternativeVC, documentUr
                 </div>
               </div>
               <div className="counterexample-content">
-                {typeof activeCounterexample.html === 'string'
+                {activeCounterexample.html == null
+                  ? <pre>{activeCounterexample.rawText ?? 'Solver model unavailable'}</pre>
+                  : typeof activeCounterexample.html === 'string'
                   ? <span dangerouslySetInnerHTML={{ __html: activeCounterexample.html }} />
                   : <HtmlDisplay html={activeCounterexample.html} />
                 }

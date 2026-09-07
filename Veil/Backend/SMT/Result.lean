@@ -46,10 +46,32 @@ structure AnnotatedSmtModel where
   /-- The model data structured returned by Lean SMT. -/
   raw : Smt.Model
   /-- A widget view of the raw model. -/
-  rawHtml : ProofWidgets.Html
+  rawHtml : Option ProofWidgets.Html := none
   /-- JSON representation of the structured counterexample. Pre-computed using
   `VeilCTI.toJson` or `VeilTrace.toJson` at construction time. -/
-  structuredJson : Json
+  structuredJson : Json := .null
+  /-- Presentation failures never remove the solver witness. -/
+  diagnostics : Array String := #[]
+
+/-- A renderer-independent, copyable account of the actual solver expressions. -/
+def AnnotatedSmtModel.rawText (model : AnnotatedSmtModel) : String :=
+  s!"sorts: {model.raw.sorts}\nvalues: {model.raw.values}"
+
+/-- Build independent optional projections, retaining SAT evidence on either failure. -/
+def annotateSmtModel (raw : Smt.Model) (render : MetaM ProofWidgets.Html)
+    (project : MetaM Json) : MetaM AnnotatedSmtModel := do
+  let mut model : AnnotatedSmtModel := { raw }
+  try
+    model := { model with structuredJson := ← project }
+  catch ex =>
+    if ex.isInterrupt then throw ex
+    model := { model with diagnostics := model.diagnostics.push s!"Structured counterexample unavailable: {← ex.toMessageData.toString}" }
+  try
+    model := { model with rawHtml := some (← render) }
+  catch ex =>
+    if ex.isInterrupt then throw ex
+    model := { model with diagnostics := model.diagnostics.push s!"Model HTML unavailable: {← ex.toMessageData.toString}" }
+  return model
 
 /-- The order in which results "saturate" (from "strongest" — eats everything —
 to "weakest" — gets eaten by everything else):
@@ -104,7 +126,7 @@ instance : ToJson SmtResult where
       Json.mkObj [("kind", Json.str "sat"),
                   ("counterexamples", toJson (counterexamples.map <| fun ce? =>
                     match ce? with
-                    | some ce => Json.mkObj [("raw", toJson ce.raw), ("html", Json.str "<p>Counter-example HTML</p>"), ("structuredJson", ce.structuredJson)]
+                    | some ce => Json.mkObj [("raw", toJson ce.raw), ("rawText", toJson ce.rawText), ("diagnostics", toJson ce.diagnostics), ("structuredJson", ce.structuredJson)]
                     | none => Json.null
                   ))]
   | .unknown reasons =>
@@ -129,6 +151,8 @@ instance : Server.RpcEncodable SmtResult where
                       let html ← Server.rpcEncode ce.rawHtml
                       return Json.mkObj [
                         ("raw", toJson ce.raw),
+                        ("rawText", toJson ce.rawText),
+                        ("diagnostics", toJson ce.diagnostics),
                         ("html", html),
                         ("structuredJson", ce.structuredJson),
                       ]
