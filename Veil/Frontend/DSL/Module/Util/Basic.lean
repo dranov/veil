@@ -331,28 +331,30 @@ def Module.uninterpretedParamIdentsForTheoryOrState [Monad m] [MonadQuotation m]
 
 /-! ## Declaration Parameter Queries -/
 
+/-- Parameters shared by theory declarations and their locality instances. -/
+def Module.theoryParameters (mod : Module) : Array Parameter :=
+  mod.parameters.filterMap fun p => match p.kind with
+  | .environmentState | .fieldConcreteType => .none
+  | .moduleTypeclass kd =>
+    match kd with
+    | .environmentState | .fieldRepresentation | .lawfulFieldRepresentation => .none
+    | _ => .some p
+  | _ => .some p
+
 def Module.declarationBaseParams [Monad m] [MonadQuotation m] [MonadExceptOf Exception m] [AddErrorMessageContext m] (mod : Module) (k : DeclarationKind) : m (Array Parameter) := do
   match k with
   | .moduleParameter => throwError "[Module.declarationBaseParams]: moduleParameter has no base parameters"
   | .stateComponent _ _ => mod.uninterpretedParamFilterMapFn (pure ·)
-  | .stateAssertion .assumption => pure (theoryParameters mod)
+  | .stateAssertion .assumption => pure mod.theoryParameters
   | .stateAssertion .invariant | .stateAssertion .safety | .stateAssertion .trustedInvariant => pure mod.parameters
   | .stateAssertion .termination | .stateAssertion .stateConstraint => pure mod.parameters -- the same as `invariant`
   | .procedure _ => pure mod.parameters
   | .derivedDefinition k _ => derivedDefinitionBaseParams mod k
 where
-  theoryParameters (mod : Module) : Array Parameter :=
-    mod.parameters.filterMap fun p => match p.kind with
-    | .environmentState | .fieldConcreteType => .none
-    | .moduleTypeclass kd =>
-      match kd with
-      | .environmentState | .fieldRepresentation | .lawfulFieldRepresentation => .none
-      | _ => .some p
-    | _ => .some p
   derivedDefinitionBaseParams (mod : Module) (k : DerivedDefinitionKind) : m (Array Parameter) := do
     match k with
     | .stateLike => mod.uninterpretedParamFilterMapFn (pure ·)
-    | .assumptionLike | .theoryGhost _ => pure (theoryParameters mod)
+    | .assumptionLike | .theoryGhost _ => pure mod.theoryParameters
     | .invariantLike | .actionLike | .theoremLike | .ghost _ => pure mod.parameters
     | .actionDoLike => pure $ #[← Parameter.mode] ++ mod.parameters
 

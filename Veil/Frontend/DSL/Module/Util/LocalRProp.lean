@@ -79,63 +79,11 @@ private structure StatePredicateLayout where
   thPos : Nat
   stPos : Nat
 
-private def Module.localDeclarationName? (mod : Module) (fullName : Name) : Option Name :=
-  if mod._declarations.contains fullName then
-    some fullName
-  else
-    -- `_declarations` stores the names as module-local DSL names, while the
-    -- simplifier sees the fully qualified Lean constants added under the
-    -- current namespace. Keep only the declaration suffix before consulting
-    -- the metadata table.
-    let localName := fullName.updatePrefix Name.anonymous
-    if mod._declarations.contains localName then some localName else none
-
-private def Module.statePredicateExprParams [Monad m] [MonadQuotation m] [MonadExceptOf Exception m] [AddErrorMessageContext m]
-    (mod : Module) (nm : Name) (dk : DeclarationKind) : m (Array Parameter) := do
-  -- TODO Replace this reconstruction with a systematic Parameter-layout API.
-  -- Locality needs the exact binder order of generated Lean declarations, but
-  -- assertion, ghost, and assembled-definition metadata currently split user
-  -- params, extracted Decidable params, and generated theory/state binders
-  -- differently.
-  let (baseParams, extraParams, actualParams) ← mod.declarationSplitParams nm dk
-  -- TODO State assertions and assembled invariant-like definitions do have
-  -- theory/state binders in their generated Lean declarations. Assertions get
-  -- defaults from `withTheoryAndState` (`:= by veil_exact_theory/state`), while
-  -- `Invariants`/`Safeties` get explicit `rd`/`st` binders from assembly.
-  -- Their metadata does not record those binders as `Parameter`s, unlike ghost
-  -- definitions where `defineGhostDefinition` tags `thstBinders` as
-  -- `.theoryArg`/`.stateArg`. The synthetic params below paper over that gap.
-  let thParam := { kind := .theoryArg, name := `th, «type» := ← `(term| $environmentTheory), userSyntax := .missing }
-  let stParam := { kind := .stateArg, name := `st, «type» := ← `(term| $environmentState), userSyntax := .missing }
-  match dk with
-  | .stateAssertion k =>
-    unless isStateAssertionWithState k do
-      throwError "{nm} is not a state assertion with a state argument"
-    pure <| baseParams ++ extraParams ++ #[thParam, stParam]
-  | .derivedDefinition (.ghost true) _ =>
-    -- FIXME: Relax this to support general ghost definitions
-    let (userParams, thstParams) := actualParams.partition fun p => p.kind != .theoryArg && p.kind != .stateArg
-    unless (thstParams.any (·.kind == .theoryArg) && thstParams.any (·.kind == .stateArg)) do
-      throwError "state ghost relation {nm} does not carry theory/state argument metadata"
-    -- `mkVeilTerm` elaborates ghost definitions as
-    --   module params, user params, extracted Decidable params, th, st.
-    -- `declarationSplitParams` intentionally separates extra params from
-    -- actual params, so reassemble the order used by the Lean declaration.
-    pure <| baseParams ++ userParams ++ extraParams ++ thstParams
-  | .derivedDefinition .invariantLike _ =>
-    pure <| baseParams ++ extraParams ++ #[thParam, stParam]
-  | _ =>
-    throwError "{nm} is not a recognized LocalRProp state predicate"
-where
-  isStateAssertionWithState : StateAssertionKind → Bool
-  | .assumption => false
-  | .invariant | .safety | .trustedInvariant | .termination | .stateConstraint => true
-
 private def Module.statePredicateLayout [Monad m] [MonadQuotation m] [MonadExceptOf Exception m] [AddErrorMessageContext m]
     (mod : Module) (nm : Name) : m StatePredicateLayout := do
   let some dk := mod._declarations[nm]?
     | throwError "statePredicateLayout: {nm} not found in module declarations"
-  let params ← mod.statePredicateExprParams nm dk
+  let params ← mod.predicateExprParams nm dk .withState
   let some thPos := params.findIdx? (·.kind == .theoryArg)
     | throwError "statePredicateLayout: missing theory argument for {nm}"
   let some stPos := params.findIdx? (·.kind == .stateArg)

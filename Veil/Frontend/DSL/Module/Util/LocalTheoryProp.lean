@@ -1,22 +1,10 @@
-import Veil.Frontend.DSL.Module.Util.AbstractState
+import Veil.Frontend.DSL.Module.Util.PredicateLayout
 
 open Lean Parser Elab Command Term Meta Tactic
 
 namespace Veil
 
 /-! ## LocalTheoryProp Typeclass Declaration -/
-
-/-- The module parameters relevant to predicates over the background theory.
-This mirrors the `theoryParameters` helper used by `declarationBaseParams` for
-assumptions and theory-only derived definitions. -/
-private def Module.localTheoryPropParams (mod : Module) : Array Parameter :=
-  mod.parameters.filterMap fun p => match p.kind with
-  | .environmentState | .fieldConcreteType => none
-  | .moduleTypeclass kd =>
-    match kd with
-    | .environmentState | .fieldRepresentation | .lawfulFieldRepresentation => none
-    | _ => some p
-  | _ => some p
 
 /-- Declare the `LocalTheoryProp` typeclass for the module.
 Its general form is:
@@ -30,7 +18,7 @@ where
 ```
 -/
 def Module.declareLocalTheoryPropTC (mod : Module) : MetaM (List Command) := do
-  let params := mod.localTheoryPropParams
+  let params := mod.theoryParameters
   let paramBinders ← params.mapM (·.binder)
   let post ← Lean.mkIdent <$> mkFreshUserName `post
   let core := mkIdent `core
@@ -85,43 +73,11 @@ private structure TheoryPredicateLayout where
   params : Array Parameter
   thPos : Nat
 
-private def Module.localDeclarationName? (mod : Module) (fullName : Name) : Option Name :=
-  if mod._declarations.contains fullName then
-    some fullName
-  else
-    let localName := fullName.updatePrefix Name.anonymous
-    if mod._declarations.contains localName then some localName else none
-
-private def Module.theoryPredicateExprParams [Monad m] [MonadQuotation m] [MonadExceptOf Exception m] [AddErrorMessageContext m]
-    (mod : Module) (nm : Name) (dk : DeclarationKind) : m (Array Parameter) := do
-  -- TODO Replace this reconstruction with a systematic Parameter-layout API.
-  -- As with `LocalRProp`, locality needs the exact binder order of generated
-  -- Lean declarations, but the metadata for assertions, ghost definitions, and
-  -- assembled definitions does not currently store that order uniformly.
-  let (baseParams, extraParams, actualParams) ← mod.declarationSplitParams nm dk
-  let thParam := { kind := .theoryArg, name := `th, «type» := ← `(term| $environmentTheory), userSyntax := .missing }
-  match dk with
-  | .stateAssertion .assumption =>
-    pure <| baseParams ++ extraParams ++ #[thParam]
-  | .derivedDefinition (.theoryGhost true) _ =>
-    let (userParams, thParams) := actualParams.partition fun p => p.kind != .theoryArg
-    unless thParams.any (·.kind == .theoryArg) do
-      throwError "theory ghost relation {nm} does not carry theory argument metadata"
-    -- `mkVeilTerm` elaborates theory ghost definitions as
-    --   theory params, user params, extracted Decidable params, th.
-    -- Reassemble that order explicitly because `declarationSplitParams`
-    -- separates extracted instances from user-written parameters.
-    pure <| baseParams ++ userParams ++ extraParams ++ thParams
-  | .derivedDefinition .assumptionLike _ =>
-    pure <| baseParams ++ extraParams ++ #[thParam]
-  | _ =>
-    throwError "{nm} is not a recognized LocalTheoryProp predicate"
-
 private def Module.theoryPredicateLayout [Monad m] [MonadQuotation m] [MonadExceptOf Exception m] [AddErrorMessageContext m]
     (mod : Module) (nm : Name) : m TheoryPredicateLayout := do
   let some dk := mod._declarations[nm]?
     | throwError "theoryPredicateLayout: {nm} not found in module declarations"
-  let params ← mod.theoryPredicateExprParams nm dk
+  let params ← mod.predicateExprParams nm dk .theoryOnly
   let some thPos := params.findIdx? (·.kind == .theoryArg)
     | throwError "theoryPredicateLayout: missing theory argument for {nm}"
   pure { params, thPos }
@@ -150,7 +106,7 @@ private def getLocalTheoryPropInst (f : Expr) (args : Array Expr) : SimpM (Optio
   let some nm := mod.localDeclarationName? fName | return none
   let some layout ← mod.theoryPredicateLayout? nm | return none
   unless args.size == layout.params.size do return none
-  let classParams := mod.localTheoryPropParams
+  let classParams := mod.theoryParameters
   unless classParams.size ≤ layout.params.size do return none
   let self ← mkTheoryPredicateSelf (.inr f) args layout
   let targetInstName ← resolveGlobalConstNoOverloadCore localTheoryPropTCName
@@ -235,7 +191,7 @@ private def Module.proveLocalityForTheoryPredicateCore (mod : Module) (nm : Name
       let some ctor := getNonRecStructureCtor? (← getEnv) targetInstName
         | throwError "unexpected error: unable to find constructor for {localTheoryPropTCName}"
       let ctorArgs ← do
-        let classParams := mod.localTheoryPropParams
+        let classParams := mod.theoryParameters
         unless classParams.size ≤ xs.size do
           throwError "unexpected theory-parameter prefix while building LocalTheoryProp instance for {nm}"
         let self ← mkTheoryPredicateSelf (.inl nmFull) xs layout
@@ -296,7 +252,7 @@ private def Module.defineLocalAbstractEqForTheoryPredicate (mod : Module) (nm : 
         let targetSelfApp ← Tactic.classical <| mkAppOptM nmFull targetSelfArgs
         mkLambdaFVarsWithAppSuffixEta ldecls targetSelfApp
     let localTheoryPropName ← resolveGlobalConstNoOverloadCore localTheoryPropTCName
-    let classParams := mod.localTheoryPropParams
+    let classParams := mod.theoryParameters
     let localTheoryPropArgs := xs.take classParams.size
     let genericInstType ← mkAppOptM localTheoryPropName ((localTheoryPropArgs.push postGeneric).map some)
     let genericInst ← synthInstance genericInstType
@@ -391,7 +347,7 @@ def Module.simplifyLocalTheoryPropCore (mod : Module) (nm : Name) : TermElabM Un
   let (nmParams, _) ← mod.declarationAllParams nm dk
   let nmBinders ← nmParams.mapM (·.binder)
   elabBinders nmBinders fun vs => do
-    let localTheoryPropArgs ← mod.localTheoryPropParams.mapM (·.arg)
+    let localTheoryPropArgs ← mod.theoryParameters.mapM (·.arg)
     let nmApp ← do
       let nmFull ← resolveGlobalConstNoOverloadCore nm
       mkAppOptM nmFull (vs.map some)
