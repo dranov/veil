@@ -22,6 +22,8 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
 
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+
   if (Array.isArray(a) && Array.isArray(b)) {
     if (a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) {
@@ -37,7 +39,7 @@ export function deepEqual(a: unknown, b: unknown): boolean {
     const bk = Object.keys(bo);
     if (ak.length !== bk.length) return false;
     for (const k of ak) {
-      if (!(k in bo)) return false;
+      if (!Object.prototype.hasOwnProperty.call(bo, k)) return false;
       if (!deepEqual(ao[k], bo[k])) return false;
     }
     return true;
