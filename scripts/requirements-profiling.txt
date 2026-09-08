@@ -1,0 +1,3 @@
+# Only plotting needs these optional dependencies. Parsing/running uses the standard library.
+matplotlib>=3.6,<4
+numpy>=1.24,<3

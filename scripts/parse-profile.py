@@ -101,7 +101,6 @@ def analyze_samples(thread: dict, filter_prefixes: list = None, use_default_filt
     tree = build_stack_tree(thread)
     samples = thread.get('samples', {})
     stacks = samples.get('stack', [])
-    times = samples.get('time', [])
     weights = samples.get('weight', [])
 
     stats = defaultdict(lambda: {"self_time": 0, "total_time": 0, "count": 0})
@@ -287,7 +286,31 @@ def main():
                         help='Output only total CPU time in ms (for scripting)')
     parser.add_argument('--limit', '-l', type=int, default=0,
                         help='Maximum number of functions to display (default: no limit)')
+    parser.add_argument('--json', action='store_true',
+                        help='Emit full identifiers and sample timings as structured JSON')
     args = parser.parse_args()
+
+    if args.json:
+        try:
+            profiles = [load_profile(path) for path in args.profiles]
+            selected = []
+            for profile in profiles:
+                threads = profile.get('threads', [])
+                if args.thread is not None:
+                    if not 0 <= args.thread < len(threads):
+                        raise ValueError(f'thread {args.thread} is out of range')
+                    threads = [threads[args.thread]]
+                selected.extend(analyze_samples(thread, args.filter, args.filter is None and not args.all)
+                                for thread in threads)
+            stats = merge_stats(selected)
+            if args.exclude:
+                stats = {name: data for name, data in stats.items() if args.exclude not in name}
+            json.dump({'format': 'veil-profile-v1', 'units': 'ms', 'functions': stats}, sys.stdout, indent=2)
+            print()
+            return
+        except (OSError, ValueError, KeyError, IndexError, TypeError) as error:
+            parser.exit(1, f'Profile analysis failed: {error}\n')
+
 
     # Default filter to veil/smt unless --all specified
     # Use None to indicate "veil or smt" default filtering

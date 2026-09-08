@@ -2,7 +2,8 @@
 Plot profiling time trends across multiple profile runs.
 
 Usage:
-    ./scripts/plot-profile-trend.py <file1> <file2> ...
+    ./scripts/parse-profile.py profile.json --json > timing.json
+    ./scripts/plot-profile-trend.py timing.json other-timing.json
     ./scripts/plot-profile-trend.py profiles/nopaxos-old.txt profiles/nopaxos-new.txt profiles/nopaxos-new2.txt
     ./scripts/plot-profile-trend.py profiles/test-ivy/timing.txt profiles/test-ivy-new/timing.txt
 
@@ -25,11 +26,10 @@ Options:
 import argparse
 import os
 import re
+import json
 import sys
 from collections import defaultdict
 
-import matplotlib.pyplot as plt
-import numpy as np
 
 
 def parse_profile_output(path: str) -> dict:
@@ -37,6 +37,13 @@ def parse_profile_output(path: str) -> dict:
 
     Returns dict: func_name -> {"self_time": ms, "total_time": ms, "count": n}
     """
+    with open(path, 'r') as source:
+        if source.read(1) == '{':
+            source.seek(0)
+            report = json.load(source)
+            if report.get('format') != 'veil-profile-v1' or not isinstance(report.get('functions'), dict):
+                raise ValueError(f'{path}: expected structured output from parse-profile.py --json')
+            return report['functions']
     stats = {}
     in_table = False
     with open(path, 'r') as f:
@@ -56,6 +63,8 @@ def parse_profile_output(path: str) -> dict:
                 )
                 if match:
                     name = match.group(1).strip()
+                    if name.endswith('...') or name in stats:
+                        raise ValueError(f'{path}: ambiguous display name {name!r}; regenerate with parse-profile.py --json')
                     self_time = float(match.group(2))
                     total_time = float(match.group(3))
                     count = int(match.group(4))
@@ -117,6 +126,9 @@ def derive_label(path: str) -> str:
 
 
 def main():
+    import matplotlib.pyplot as plt
+    import numpy as np
+
     parser = argparse.ArgumentParser(
         description='Plot profiling time trends across multiple runs'
     )
@@ -224,7 +236,8 @@ def main():
             short_labels.append(f)
     ax.set_yticklabels(short_labels, fontsize=8)
     ax.invert_yaxis()
-    ax.set_xlabel(f'{args.metric.capitalize()} time (seconds)')
+    metric_label = 'Inclusive time (overlapping seconds)' if args.metric == 'total' else 'Self time (seconds)'
+    ax.set_xlabel(metric_label)
     title = args.title or f'Profile Comparison — {args.metric.capitalize()} Time'
     ax.set_title(title)
     ax.legend(loc='lower right')
