@@ -34,7 +34,39 @@ jobs:
         sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-15 100
     - name: Checkout repository
       uses: actions/checkout@v4
+    - name: Set up Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+        cache: npm
+        cache-dependency-path: widget/package-lock.json
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Test profiling tools
+      run: python3 -m unittest discover -s scripts/tests -v
     - name: Build and test Veil
       uses: leanprover/lean-action@v1
       with:
         use-github-cache: false # TODO: enable this
+    - name: Test widget source watching
+      working-directory: widget
+      run: npm run test:watch
+    - name: Build curated finite examples
+      timeout-minutes: 5
+      run: lake build Examples.Tutorial.POPL26.RingFin Examples.Puzzles.DieHard
+    # Hosted runner timing is advisory until budgets are calibrated on controlled hardware.
+    # Keep the checked-in budgets and visible failures, including the known PickPerf timeout.
+    - name: Record performance budgets (advisory)
+      if: runner.os == 'Linux'
+      continue-on-error: true
+      run: lake script run perftest 2>&1 | tee perftest.log
+    - name: Retain performance results
+      if: always() && runner.os == 'Linux'
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-linux
+        path: perftest.log
+        if-no-files-found: warn
+        retention-days: 14

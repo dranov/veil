@@ -22,7 +22,8 @@ profiles are removed before a run.
 profile paths and log paths. `summary.csv` quotes filenames correctly.
 `profiles.json` lists successfully decoded profiles. `timing.json` contains full
 function identifiers; `timing.txt` is only a human-readable, truncated table.
-Trend plots should consume the structured JSON, not scrape the table:
+Trend plots should consume the structured JSON, not scrape the table. On
+Debian/Ubuntu, install `python3-venv` before creating the optional environment:
 
 ```sh
 python3 -m venv .venv-profiling
