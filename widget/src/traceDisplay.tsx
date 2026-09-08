@@ -65,7 +65,7 @@ interface TraceData {
   extraVals?: Record<string, unknown>;
 }
 
-type ModelCheckingResult =
+type ModelCheckingResult = (
   | {
       result: "found_violation";
       violation: Violation;
@@ -83,7 +83,7 @@ type ModelCheckingResult =
   | {
       // Trace-only data without a result (for displaying execution traces)
       trace: TraceData;
-    };
+    }) & { diagnostics?: string[] };
 
 interface ModelCheckerViewProps {
   result: ModelCheckingResult;
@@ -737,6 +737,9 @@ const ModelCheckerView: React.FC<ModelCheckerViewProps> = ({
     <>
       <style>{styles}</style>
       <div className="mc-root">
+        {result.diagnostics?.map((diagnostic, index) => (
+          <p role="status" key={index}>{diagnostic}</p>
+        ))}
         <div className="mc-toolbar">
           {!showRawJson && !showRawModel && (
             <>

@@ -88,7 +88,7 @@ def formatTrace (j : Json) (ind : String := "  ") : String := Id.run do
   | .arr states => r ++ (states.toList.map (fmtState · ind) |> "\n".intercalate)
   | _ => r ++ s!"{ind}(no states)"
 
-def formatModelCheckingResult (j : Json) : MessageData :=
+private def formatModelCheckingResultCore (j : Json) : MessageData :=
   match fmtJson (j.getObjValD "result") with
   | "found_violation" =>
     let v := j.getObjValD "violation"
@@ -104,5 +104,13 @@ def formatModelCheckingResult (j : Json) : MessageData :=
     else m!"✅ No violation (explored {fmtJson (j.getObjValD "explored_states")} states)"
   | "cancelled" => m!"⚠️ Cancelled"
   | r => if j.getObjValD "error" != .null then m!"💥 Error: {fmtJson (j.getObjValD "error")}" else m!"Unknown: {r}"
+
+/-- Include model-completion and decoding diagnostics in textual trace output. -/
+def formatModelCheckingResult (j : Json) : MessageData :=
+  let summary := formatModelCheckingResultCore j
+  match j.getObjValAs? (Array String) "diagnostics" with
+  | .ok diagnostics => if diagnostics.isEmpty then summary else
+      m!"{summary}\n{String.intercalate "\n" diagnostics.toList}"
+  | .error _ => summary
 
 end Veil.TraceDisplay
