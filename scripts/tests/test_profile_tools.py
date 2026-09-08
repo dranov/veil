@@ -3,7 +3,6 @@ import json
 import importlib.util
 import sys
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 import unittest
@@ -15,25 +14,61 @@ class FolderExitStatus(unittest.TestCase):
     def test_failed_child_keeps_report_and_returns_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            shutil.copy(SCRIPTS / 'profile-folder.sh', root)
-            child = root / 'profile-file.sh'
+            child = root / 'lake'
             child.write_text('#!/bin/sh\nexit 7\n')
             child.chmod(0o755)
-            # The legacy shell runner depends on bc; its replacement must not.
-            calculator = root / 'bc'
-            calculator.write_text('#!/bin/sh\ncat >/dev/null\necho 0\n')
-            calculator.chmod(0o755)
             source = root / 'source'
             source.mkdir()
             (source / 'Failure.lean').write_text('-- controlled compiler failure\n')
             output = root / 'output'
             result = subprocess.run(
-                ['bash', str(root / 'profile-folder.sh'), str(source), str(output)],
+                ['sh', str(SCRIPTS / 'profile-folder.sh'), str(source), str(output)],
                 env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH']},
                 text=True, capture_output=True,
             )
             self.assertNotEqual(result.returncode, 0, result.stdout)
             self.assertIn('Failed: 1', (output / 'summary.txt').read_text())
+
+    def test_success_without_new_profile_does_not_reuse_stale_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / 'lake'
+            child.write_text('#!/bin/sh\nexit 0\n')
+            child.chmod(0o755)
+            source = root / 'source.lean'
+            source.write_text('-- fixture\n')
+            output = root / 'old.json'
+            output.write_text('{"threads": []}')
+            result = subprocess.run(['sh', str(SCRIPTS / 'profile-file.sh'), '--quiet', str(source), str(output)],
+                                    env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH']},
+                                    text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(output.exists())
+            self.assertIn('"status": "failed"', result.stdout)
+
+    def test_paths_with_spaces_commas_and_flattening_collisions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            child = root / 'lake'
+            child.write_text('#!' + sys.executable + '\nimport sys, pathlib\n'
+                             'output = next(a.split("=", 1)[1] for a in sys.argv if a.startswith("-Dtrace.profiler.output="))\n'
+                             'pathlib.Path(output).write_text("{\\"threads\\": []}")\n')
+            child.chmod(0o755)
+            source = root / 'source files'
+            (source / 'a').mkdir(parents=True)
+            for name in ['hello world,yes.lean', 'a_b.lean', 'a/b.lean']:
+                (source / name).write_text('-- fixture\n')
+            output = root / 'output files'
+            result = subprocess.run(['sh', str(SCRIPTS / 'profile-folder.sh'), str(source), str(output)],
+                                    env={**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH']},
+                                    text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = json.loads((output / 'summary.json').read_text())
+            self.assertEqual(len(report['files']), 3)
+            self.assertTrue((output / 'a_b.json').exists())
+            self.assertTrue((output / 'a/b.json').exists())
+            self.assertTrue((output / 'hello world,yes.json').exists())
+            self.assertTrue((output / 'timing.json').exists())
 
 
 def load_script(name):
