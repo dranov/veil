@@ -1,4 +1,3 @@
-import { glob } from 'glob';
 import { nodeResolve } from '@rollup/plugin-node-resolve';
 import commonjs from '@rollup/plugin-commonjs';
 import replace from '@rollup/plugin-replace';
@@ -6,7 +5,8 @@ import terser from '@rollup/plugin-terser';
 
 /** @type {(_: any) => import('rollup').RollupOptions} */
 export default _cliArgs => {
-    const inputs = glob.sync('dist/*.js')
+    // Only widget entry points are standalone bundles; helpers are included by imports.
+    const inputs = ['htmlDisplay', 'traceDisplay', 'veilUtils', 'verificationResults'].map(name => `dist/${name}.js`)
 
     const isProduction = process.env.NODE_ENV && process.env.NODE_ENV === 'production';
     const configForInput = fname => ({
@@ -20,6 +20,7 @@ export default _cliArgs => {
             plugins: isProduction ? [ terser() ] : [],
             compact: isProduction
         },
+        watch: { buildDelay: 100 },
         external: [
             'react',
             'react-dom',

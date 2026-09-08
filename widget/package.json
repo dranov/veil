@@ -4,11 +4,12 @@
   "description": "Veil widget components for Lean infoview",
   "type": "module",
   "scripts": {
-    "watch": "rollup --environment NODE_ENV:production --config --watch",
-    "watch-dev": "rollup --config --watch",
+    "watch": "node scripts/watch.mjs --production",
+    "watch-dev": "node scripts/watch.mjs",
     "build": "npx tsc && rollup --environment NODE_ENV:production --config",
     "build-dev": "npx tsc && rollup --config",
-    "clean": "rm -rf dist/"
+    "clean": "rm -rf dist/",
+    "test:watch": "node --test test/watch.test.mjs"
   },
   "dependencies": {
     "@leanprover/infoview": "~0.11.0",
