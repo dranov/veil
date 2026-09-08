@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { DocumentPosition } from '@leanprover/infoview';
 import {
   ChangeInfo,
   diffChanges,
@@ -26,7 +25,6 @@ interface ParsedState {
   fields: Record<string, unknown>;
   failing?: boolean; // True if an assertion failed while executing the transition to this state
 }
-type Trace = ParsedState[];
 
 type ViolationKind = "assumption_failure" | "safety_failure" | "deadlock" | "assertion_failure";
 
