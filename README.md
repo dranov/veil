@@ -98,7 +98,9 @@ would take a very long time to build.
 From `widget/`, `npm ci` installs the locked dependencies, `npm run build`
 checks TypeScript and produces the widget bundles, and `npm run watch-dev`
 watches TypeScript sources and rebuilds their bundles. `npm run watch` does the
-same with production minification. `npm run test:watch` exercises a real source
+same with production minification. Builds consume the committed package lock
+without updating it; run `npm install` explicitly when changing dependencies and
+review the resulting lockfile. `npm run test:watch` exercises a real source
 edit and a newly imported helper while both watchers are running.
 
 See [profiling instructions](scripts/README-profiling.md) for the standard-library

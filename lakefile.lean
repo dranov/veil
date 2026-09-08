@@ -35,12 +35,10 @@ input_file widgetPackageJson where
   path := widgetDir / "package.json"
   text := true
 
-/-- Target to update `package-lock.json` whenever `package.json` has changed. -/
-target widgetPackageLock pkg : FilePath := do
-  let packageFile ← widgetPackageJson.fetch
-  let packageLockFile := pkg.widgetDir / "package-lock.json"
-  buildFileAfterDep (text := true) packageLockFile packageFile fun _srcFile => do
-    pkg.runNpmCommand #["install"]
+/-- Builds consume the committed lockfile; dependency updates are an explicit npm install. -/
+input_file widgetPackageLock where
+  path := widgetDir / "package-lock.json"
+  text := true
 
 input_file widgetRollupConfig where
   path := widgetDir / "rollup.config.js"
@@ -59,6 +57,7 @@ input_dir widgetJsSrcs where
 /-- Target to build all widget modules from `widgetJsSrcs`. -/
 def widgetJsAllTarget (pkg : Package) (isDev : Bool) : FetchM (Job Unit) := do
   let srcs ← widgetJsSrcs.fetch
+  let manifest ← widgetPackageJson.fetch
   let rollupConfig ← widgetRollupConfig.fetch
   let tsconfig ← widgetTsconfig.fetch
   let widgetPackageLock ← widgetPackageLock.fetch
@@ -69,6 +68,7 @@ def widgetJsAllTarget (pkg : Package) (isDev : Bool) : FetchM (Job Unit) := do
   `afterBuildCacheAsync` guarantees this. -/
   pkg.afterBuildCacheAsync do
   srcs.bindM (sync := true) fun _ =>
+  manifest.bindM (sync := true) fun _ =>
   rollupConfig.bindM (sync := true) fun _ =>
   tsconfig.bindM (sync := true) fun _ =>
   widgetPackageLock.mapM fun _ => do
