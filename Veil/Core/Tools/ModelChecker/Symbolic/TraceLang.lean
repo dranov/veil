@@ -273,8 +273,8 @@ private def logDischargerErrors (dischargers : Array (DischargerResultData SmtRe
       | some (.proven _ (some (.sat models)) _) | some (.disproven (some (.sat models)) _) => models
       | _ => #[]
     for model in models.filterMap id do
-      for diagnostic in model.diagnostics do logWarning diagnostic
-      if model.structuredJson == .null then logInfo model.rawText
+      for diagnostic in model.diagnostics do logWarning m!"{diagnostic}"
+      if model.structuredJson == .null then logInfo m!"{model.rawText}"
 
 /-- Extract trace JSON from a VCResult's discharger results. -/
 private def extractTraceJsonFromVC (vcResult : VCResult VCMetadata SmtResult) : Option Json :=
