@@ -1,8 +1,7 @@
 import Std
 import Batteries.Data.Array.Merge
 import Batteries.Data.Array.Pairwise
-import Veil.Frontend.DSL.State.Types
-import Veil.Frontend.DSL.State.Instances
+import Veil.Util.FiniteTypes
 import Veil.Util.SortedList
 
 /-! # Sorted Array
@@ -1076,7 +1075,10 @@ instance : Inhabited (OrdArray α) where
 instance [Repr α] : Repr (OrdArray α) where
   reprPrec s p := reprPrec s.val.toList p
 
-instance [Repr α] : Lean.ToJson (OrdArray α) := Veil.jsonOfRepr
+/-- Legacy display encoding: retain the textual representation explicitly,
+without importing the frontend's global fallback instances. -/
+instance [Repr α] : Lean.ToJson (OrdArray α) where
+  toJson s := Lean.Json.str (toString (repr s))
 
 /-! ### Ordering instances -/
 

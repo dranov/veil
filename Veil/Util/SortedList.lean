@@ -1,8 +1,7 @@
 import Std
 import Mathlib.Data.List.Sublists
 import Mathlib.Data.List.Destutter
-import Veil.Frontend.DSL.State.Types
-import Veil.Frontend.DSL.State.Instances
+import Veil.Util.FiniteTypes
 
 /-! # Sorted List -/
 
@@ -943,7 +942,8 @@ instance [Repr α] : Repr (OrdList α) where
   reprPrec s p := reprPrec s.val p
 
 instance [Repr α] : Lean.ToJson (OrdList α) where
-  toJson s := Lean.ToJson.toJson s.val
+  -- Preserve the historical element-wise Repr encoding without a global fallback.
+  toJson s := Lean.Json.arr (s.val.toArray.map fun a => Lean.Json.str (toString (repr a)))
 
 /-! ### Ordering instances -/
 

@@ -1,4 +1,4 @@
-import Veil.Frontend.DSL.State.Types
+import Veil.Util.FiniteTypes
 
 open Veil IteratedProd
 

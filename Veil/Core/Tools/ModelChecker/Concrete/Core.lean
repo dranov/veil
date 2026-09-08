@@ -1,7 +1,7 @@
 import Veil.Core.Tools.ModelChecker.TransitionSystem
 import Veil.Core.Tools.ModelChecker.Interface
 import Veil.Core.Tools.ModelChecker.Trace
-import Veil.Frontend.DSL.State.Types
+import Veil.Util.FiniteTypes
 import Veil.Util.ShardedSetUInt
 import Batteries.Lean.HashMap
 
