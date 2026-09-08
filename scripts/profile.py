@@ -50,7 +50,7 @@ def profile_file(source, output):
     output.unlink(missing_ok=True)
     log = output.with_suffix('.log')
     command = ['lake', 'lean', str(source), '--', '-Dtrace.profiler=true',
-               f'-Dtrace.profiler.output={output}', '-Dtrace.veil.perf=true', '-Dtrace.smt.perf=true']
+               f'-Dtrace.profiler.output={output}', '-Dweak.trace.veil.perf=true', '-Dweak.trace.smt.perf=true']
     start = time.monotonic()
     record = {'file': str(source), 'status': 'failed', 'real_seconds': 0.0,
               'cpu_seconds': None, 'profile_file': str(output), 'log_file': str(log)}
