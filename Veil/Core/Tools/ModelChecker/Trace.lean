@@ -1,5 +1,6 @@
 import Veil.Core.Tools.ModelChecker.TransitionSystem
 import Lean
+import Veil.Util.ModelJson
 
 namespace Veil.ModelChecker
 open Lean
@@ -87,7 +88,7 @@ instance jsonOfTrace {ρ σ l : Type} [ToJson ρ] [ToJson σ] [ToJson l] : ToJso
             ("transition", toJson failStep.transitionLabel),
             ("failing", toJson true) ])
       | none => states
-    Json.mkObj
+    losslessModelJson <| Json.mkObj
       [ ("theory", toJson tr.theory),
         ("states", Json.arr statesWithFailure) ]
 

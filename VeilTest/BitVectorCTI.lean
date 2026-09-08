@@ -39,7 +39,7 @@ error: Initialization must establish the invariant:
           foo = []
         Action: initializer
         Post-state:
-          foo = [[0x0#1, 0x1#1]]
+          foo = [[0, 1]]
   inv_2 ... ✅
 -/
 #guard_msgs in
