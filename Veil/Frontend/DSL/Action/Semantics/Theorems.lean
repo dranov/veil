@@ -1,4 +1,4 @@
-import Veil.Frontend.DSL.Action.Semantics.Definitions
+import Veil.Frontend.DSL.Action.Semantics.TransitionRefinement
 import Veil.Frontend.DSL.Action.Extract
 
 namespace Veil

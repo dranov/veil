@@ -272,9 +272,11 @@ def Module.assembleNextTransition (mod : Module) : CommandElabM (Command × Modu
   let mod ← mod.registerDerivedDefinition derivedDef
   return (nextTrDef, mod)
 
--- FIXME: The following is just an expedient solution to the lack of soundness
--- of `Transition.toVeilM`. It is **NOT** meant to be maintained and should be
--- immediately removed once that issue is fixed.
+/-- Dispatch directly to each declared action relation. For native transitions
+this can allow more successors than executable `Next`: conversion additionally
+requires that a successor can be obtained by updating the selected substate.
+See `Transition.toVeilM_transition_iff`. Keep both relations until the module
+assembly proves the required representability contract for every action. -/
 
 def Module.assembleNextTransition' (mod : Module) : CommandElabM Command := do
   let actionNames := Std.HashSet.ofArray $ mod.actions.map (·.name)
