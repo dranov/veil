@@ -49,6 +49,12 @@ These files are also available in the [online playground](#online-playground), u
 An explanation of the constructs of the Veil DSL can be found at
 [`docs/DSL-Reference.md`](docs/DSL-Reference.md). 
 
+## Contributing
+
+See [CONTRIBUTORS.md](CONTRIBUTORS.md) for the development workflow, testing,
+and commit conventions. Automated coding agents should also read
+[AGENTS.md](AGENTS.md).
+
 ## Build
 
 Veil requires [Lean 4](https://github.com/leanprover/lean4) and
