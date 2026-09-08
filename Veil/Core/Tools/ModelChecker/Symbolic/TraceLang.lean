@@ -1,6 +1,7 @@
 import Lean
 import Lean.Parser
 import Veil.Util.Meta
+import Veil.Util.TraceNames
 import Veil.Frontend.DSL.Module.Util.Assertions
 import Veil.Frontend.DSL.Module.Names
 import Veil.Frontend.DSL.Util
@@ -140,7 +141,7 @@ private def mkTagBinder (trIdx : Nat) : TermElabM (Ident × BinderPair) := do
 private def mkParamBinders (params : Array Parameter) (prefix_ : String)
     : TermElabM (Array Ident × Array BinderPair) := do
   let results ← params.mapIdxM fun idx p => do
-    let uniqueId := mkIdent $ Name.mkSimple s!"{prefix_}_arg{idx}_{p.name}"
+    let uniqueId := mkIdent $ traceParamName prefix_ idx p.name
     return (uniqueId, ← mkBinderPair uniqueId p.type)
   return (results.map (·.1), results.map (·.2))
 
@@ -158,7 +159,7 @@ private def mkAnyActionDisjunction (mod : Module) (rtsExpr theoryId currState ne
     (tagId : Ident) (trIdx : Nat) : TermElabM (TSyntax `term × Array BinderPair) := do
   let results ← mod.actions.mapM fun act => do
     let (_, specificParams) ← mod.declarationAllParams act.name act.declarationKind
-    let (argIdents, binders) ← mkParamBinders specificParams s!"_tr{trIdx}_act{act.name.toString.length}_{act.name}"
+    let (argIdents, binders) ← mkParamBinders specificParams (traceActionParamPrefix trIdx act.name)
     return (← mkTransitionExpr rtsExpr theoryId currState nextState tagId act.name argIdents, binders)
   return (← repeatedOr (results.map (·.1)), results.flatMap (·.2))
 

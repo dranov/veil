@@ -1,4 +1,5 @@
 import Lean
+import Veil.Util.TraceNames
 import Smt
 import ProofWidgets.Compat
 import Veil.Frontend.DSL.Module.Representation
@@ -106,7 +107,7 @@ private def parseArgParam (s : String) : Option (Nat × Name) := do
   guard (parts.length ≥ 2)
   let argIdx ← parseNat? parts.head!
   let paramName := "_".intercalate parts.tail!
-  return (argIdx, .mkSimple paramName)
+  return (argIdx, ← decodeTraceName paramName)
 
 /-- Check if a name matches the pattern "_tr{n}_arg{m}_{param}" and return (trIdx, argIdx, paramName).
     For example: `_tr1_arg0_sender` → `some (1, 0, sender)` -/
@@ -135,7 +136,7 @@ def isAnyActionParam (name : Name) : Option (Nat × Name × Nat × Name) := do
     let suffix := String.ofList (rest.toList.drop actionLength)
     let argRest ← (suffix.dropPrefix? "_arg").map (·.toString)
     let (argIdx, paramName) ← parseArgParam argRest
-    return (trIdx, .mkSimple actNameStr, argIdx, paramName)
+    return (trIdx, ← decodeTraceName actNameStr, argIdx, paramName)
 
 /-- Check if a name matches the pattern `actionTagEnumInstName.actionName` and return actionName.
     For example: `__veil_tag.send` → `some send` -/
