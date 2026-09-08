@@ -70,6 +70,15 @@ class StructuredTimings(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'regenerate'):
                 load_script('plot-profile-trend').parse_profile_output(str(path))
 
+    def test_filtering_does_not_move_leaf_time_to_an_ancestor(self):
+        thread = {'stringArray': ['veil.parent', 'other.leaf'],
+                  'funcTable': {'name': [0, 1]}, 'frameTable': {'func': [0, 1]},
+                  'stackTable': {'frame': [0, 1], 'prefix': [None, 0]},
+                  'samples': {'stack': [1], 'weight': [7]}}
+        stats = load_script('parse-profile').analyze_samples(thread, ['veil'])
+        self.assertEqual(stats['veil.parent']['self_time'], 0)
+        self.assertEqual(stats['veil.parent']['total_time'], 7)
+
     def test_invalid_structured_input_is_a_failure(self):
         result = subprocess.run([sys.executable, str(SCRIPTS / 'parse-profile.py'), '/missing/profile.json', '--json'],
                                 text=True, capture_output=True)

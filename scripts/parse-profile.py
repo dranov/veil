@@ -115,16 +115,17 @@ def analyze_samples(thread: dict, filter_prefixes: list = None, use_default_filt
         if not trace:
             continue
 
-        # Apply filter if specified
+        original_leaf = trace[0]
+        # Filtering controls which rows are reported, not where the sample ran.
         if filter_prefixes or use_default_filter:
             trace = [f for f in trace if matches_filter(f, filter_prefixes, use_default_filter)]
             if not trace:
                 continue
 
         # Self time goes to the leaf (first in trace)
-        leaf = trace[0]
-        stats[leaf]["self_time"] += weight
-        stats[leaf]["count"] += 1
+        if original_leaf in trace:
+            stats[original_leaf]["self_time"] += weight
+            stats[original_leaf]["count"] += 1
 
         # Total time goes to all functions in stack
         seen = set()
@@ -167,7 +168,7 @@ def print_tree_view(thread: dict, filter_prefixes: list = None):
     weights = samples.get('weight', [])
 
     # Build call tree with timing
-    call_tree = defaultdict(lambda: {"children": defaultdict(int), "self_time": 0})
+    call_tree = defaultdict(lambda: {"children": defaultdict(int), "self_time": 0, "total_time": 0})
 
     for i, stack_idx in enumerate(stacks):
         if stack_idx is None:
@@ -176,6 +177,7 @@ def print_tree_view(thread: dict, filter_prefixes: list = None):
         weight = weights[i] if i < len(weights) else 1
         trace = get_stack_trace(tree, stack_idx)
 
+        original_leaf = trace[0] if trace else None
         if filter_prefixes:
             # Only show filtered functions but keep hierarchy
             trace = [f for f in trace if any(prefix in f for prefix in filter_prefixes)]
@@ -184,7 +186,10 @@ def print_tree_view(thread: dict, filter_prefixes: list = None):
             continue
 
         # Record self time at leaf
-        call_tree[trace[0]]["self_time"] += weight
+        if original_leaf in trace:
+            call_tree[original_leaf]["self_time"] += weight
+        for name in set(trace):
+            call_tree[name]["total_time"] += weight
 
         # Record parent-child relationships (trace is leaf->root)
         for j in range(len(trace) - 1):
@@ -207,7 +212,7 @@ def print_tree_view(thread: dict, filter_prefixes: list = None):
         visited.add(name)
 
         data = call_tree[name]
-        total = data["self_time"] + sum(data["children"].values())
+        total = data["total_time"]
         prefix = "  " * indent
         display_name = name if len(name) + indent * 2 <= 68 else name[:65 - indent * 2] + "..."
         print(f"{prefix}{display_name:<{70-indent*2}} {total:>10.1f}")
@@ -220,7 +225,7 @@ def print_tree_view(thread: dict, filter_prefixes: list = None):
     print(f"\n{'Call Tree':<70} {'Time (ms)':>10}")
     print("-" * 82)
 
-    sorted_roots = sorted(roots, key=lambda r: call_tree[r]["self_time"] + sum(call_tree[r]["children"].values()), reverse=True)
+    sorted_roots = sorted(roots, key=lambda r: call_tree[r]["total_time"], reverse=True)
     for root in sorted_roots[:10]:
         print_node(root)
         print()
