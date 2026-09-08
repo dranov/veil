@@ -87,7 +87,7 @@ def VCDischarger.fromTerm (term : Term) (actName : Name) (vcStatement : VCStatem
         -- tactic still failed, and the fallback error result is published.
         if witness.hasMVar || witness.hasFVar || witness.hasSyntheticSorry then
           throwError "unsolved goals"
-        pure (.inl witness)
+        pure (.inl (← liftM (cacheProofProvenance witness)))
       | .inr ex => pure (.inr ex)
     mkDischargerResult dischargerId.name actName smtCh data time
 

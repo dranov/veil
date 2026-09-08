@@ -134,6 +134,7 @@ private def registerTheoremDischarger (declName : Name) : AttrM Unit := do
           .error #[(ex, Json.str message)] 0
         registerFinishedTheoremDischarger declName result
       | .ok witness => do
+        let witness ← liftM (cacheProofProvenance witness)
         let result : DischargerResult SmtResult :=
           .proven (some witness) none 0
         registerFinishedTheoremDischarger declName result
@@ -161,8 +162,10 @@ initialize
         throwAttrMustBeGlobal veilAttrName kind
       let .thmInfo info := (← getConstInfo declName)
         | throwError "`[veil]` only applies to theorems"
-      if info.value.hasSorry then
-        let fallback := theoremSorryMessage declName info.value
+      let provenance ← liftM (proofProvenance (mkConst declName))
+      if info.value.hasSyntheticSorry || provenance.hasAdmissions then
+        let fallback := if info.value.hasSorry then theoremSorryMessage declName info.value
+          else m!"interactive proof `{declName}` depends on an admitted declaration (`sorry`)"
         let result : DischargerResult SmtResult := .error (← currentErrorEntries fallback) 0
         let res ← registerFinishedTheoremDischarger declName result
         match res with

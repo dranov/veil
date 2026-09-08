@@ -1,4 +1,5 @@
 import Veil.Core.Tools.Verifier.Manager
+import Veil.Core.Tools.Verifier.ProofProvenance
 import Veil.Frontend.DSL.Infra.Metadata
 
 namespace Veil
@@ -101,8 +102,10 @@ structure VCResult (VCMetaT ResultT : Type) where
   alternativeFor : Option VCId := none
   /-- Whether this VC is currently dormant (waiting for its primary to fail). -/
   isDormant : Bool := false
-  /-- True iff this VC's selected successful proof witness contains `sorry`. -/
+  /-- Compatibility flag: direct or transitive admissions, including marked SMT trust. -/
   proofHasSorry : Bool := false
+  /-- Provenance of the selected witness, absent when there is no proof witness. -/
+  proofProvenance : Option ProofProvenance := none
   /-- The theorem statement text for inserting into the editor.
       Format: `theorem <name> <params> : <statement> := by sorry` -/
   theoremText : Option String := none
@@ -119,6 +122,7 @@ instance [ToJson VCMetaT] [ToJson ResultT] : ToJson (VCResult VCMetaT ResultT) w
       ("alternativeFor", match vcResult.alternativeFor with | some id => toJson id | none => Json.null),
       ("isDormant", toJson vcResult.isDormant),
       ("proofHasSorry", toJson vcResult.proofHasSorry),
+      ("proofProvenance", toJson vcResult.proofProvenance),
       ("theoremText", match vcResult.theoremText with | some t => toJson t | none => Json.null)
     ]
 
@@ -192,19 +196,11 @@ def VCManager.vcSuccessfulTime (mgr : VCManager VCMetaT ResultT) (vcId : VCId) :
     | some res => return some res.time
     | none => return none
 
-private def DischargerResult.proofHasSorry : DischargerResult ResultT → Bool
-  | .proven (some witness) _ _ => witness.hasSorry
-  | _ => false
-
-private def TimingData.proofHasSorry (timing : TimingData ResultT) : Bool :=
-  match timing.successfulDischargerId with
-  | none => false
-  | some successfulId =>
-    timing.dischargers.any fun discharger =>
-      discharger.id == successfulId &&
-        match discharger.result with
-        | some result => result.proofHasSorry
-        | none => false
+private def TimingData.proofWitness? (timing : TimingData ResultT) : Option Expr := do
+  let successfulId ← timing.successfulDischargerId
+  let discharger ← timing.dischargers.find? (·.id == successfulId)
+  let .proven (some witness) _ _ ← discharger.result | none
+  return witness
 
 /-- Build `TimingData` for a specific VC. -/
 def mkTimingData [Monad m] [MonadError m] [MonadLiftT BaseIO m] (mgr : VCManager VCMetaT ResultT) (vc : VerificationCondition VCMetaT ResultT) : m (TimingData ResultT) := do
@@ -238,6 +234,7 @@ callers that render repeatedly while verification is running should pass
 def mkVCResult [Monad m] [MonadError m] [MonadLiftT BaseIO m] [MonadLiftT CoreM m] (mgr : VCManager VCMetaT ResultT) (vcId : VCId) (includeTheoremText : Bool := true) : m (VCResult VCMetaT ResultT) := do
   let .some vc := mgr.nodes[vcId]? | throwError s!"mkVCResult: VC {vcId} not found in manager"
   let timing ← mkTimingData mgr vc
+  let provenance ← timing.proofWitness?.mapM fun witness => liftM (Veil.proofProvenance witness)
   let theoremText ← if includeTheoremText then some <$> liftM (mkTheoremText vc) else pure none
   return {
     id := vcId
@@ -247,7 +244,8 @@ def mkVCResult [Monad m] [MonadError m] [MonadLiftT BaseIO m] [MonadLiftT CoreM 
     timing := timing
     alternativeFor := mgr.findPrimaryVC vcId
     isDormant := mgr.dormantVCs.contains vcId
-    proofHasSorry := timing.proofHasSorry
+    proofHasSorry := provenance.any (fun p => p.hasAdmissions || p.trustsSmt)
+    proofProvenance := provenance
     theoremText := theoremText
   }
 

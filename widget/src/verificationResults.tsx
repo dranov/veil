@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ProofProvenance, summarizeProofProvenance } from './proofProvenance';
 import { EditorContext } from '@leanprover/infoview';
 import HtmlDisplay, { Html } from './htmlDisplay';
 import {
@@ -102,8 +103,9 @@ interface VerificationCondition {
   isDormant?: boolean;
   /** Theorem text for inserting into the editor (only for non-proven VCs) */
   theoremText?: string | null;
-  /** True when this VC's selected successful proof witness contains `sorry`. */
+  /** Compatibility flag for admissions, including marked SMT trust. */
   proofHasSorry?: boolean;
+  proofProvenance?: ProofProvenance | null;
 }
 
 interface VerificationResults {
@@ -604,6 +606,21 @@ const ManualProofBanner: React.FC<{
   );
 };
 
+/** Admissions and other axioms must not be described as SMT solver trust. */
+const ProofDependenciesBanner: React.FC<{ vcs: VerificationCondition[] }> = ({ vcs }) => {
+  const { admittedCount, unavailableCount, additionalAxioms } =
+    summarizeProofProvenance(vcs.filter(isInductionVC));
+  if (!admittedCount && !unavailableCount && !additionalAxioms.length) return null;
+  return <div className="vr-trusted-smt-banner">
+    <span className="vr-trusted-smt-banner-icon">⚠️</span>
+    <span className="vr-trusted-smt-banner-text">
+      {admittedCount > 0 && <div>Admitted dependencies in {admittedCount} proof{admittedCount === 1 ? '' : 's'} (<code>sorry</code>).</div>}
+      {additionalAxioms.length > 0 && <div>Additional declared axioms: {additionalAxioms.join(', ')}.</div>}
+      {unavailableCount > 0 && <div>Complete provenance is unavailable for {unavailableCount} proof{unavailableCount === 1 ? '' : 's'}.</div>}
+    </span>
+  </div>;
+};
+
 /** Banner shown when one or more VCs were proven by trusting the SMT solver. */
 const TrustedSmtBanner: React.FC<{
   vcs: VerificationCondition[];
@@ -612,11 +629,7 @@ const TrustedSmtBanner: React.FC<{
 }> = ({ vcs, documentUri, optionInsertPos }) => {
   const insertTrustOption = useTrustOptionInserter(documentUri, optionInsertPos);
   const [inserting, setInserting] = React.useState(false);
-  const count = vcs.filter(vc =>
-    isInductionVC(vc) &&
-    !vc.isDormant &&
-    vc.proofHasSorry === true
-  ).length;
+  const { trustedCount: count } = summarizeProofProvenance(vcs.filter(isInductionVC));
 
   if (count === 0) return null;
 
@@ -2278,6 +2291,7 @@ const VerificationResultsView: React.FC<VerificationResultsProps> = ({ results, 
               })}
             </div>
 
+            <ProofDependenciesBanner vcs={results.vcs} />
             <TrustedSmtBanner
               vcs={results.vcs}
               documentUri={documentUri}

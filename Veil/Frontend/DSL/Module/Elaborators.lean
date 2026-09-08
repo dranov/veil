@@ -363,9 +363,9 @@ private def Module.ensureExecutableModelCheckerDefinitions (mod : Module) : Comm
   stepOrAbort <| Extract.runGenExtractCommand mod
   stepOrAbort <| elabVeilCommand (← Extract.Module.assembleEnumerableTransitionSystem mod)
 
-private def proofHasSorryGoalCount (results : VerificationResults VCMetadata SmtResult) : Nat :=
+private def trustedSmtGoalCount (results : VerificationResults VCMetadata SmtResult) : Nat :=
   results.vcs.foldl (init := 0) fun count vc =>
-    if vc.proofHasSorry then count + 1 else count
+    if vc.proofProvenance.any (·.trustsSmt) then count + 1 else count
 
 private def trustedSmtWarning (count : Nat) : MessageData :=
   let goalWord := if count == 1 then "goal" else "goals"
@@ -398,9 +398,15 @@ def logVerificationResults (stx : Syntax) (results : VerificationResults VCMetad
     unless ← isModelCheckCompileMode do
       logInfoAt stx msg
   unless ← isModelCheckCompileMode do
-    let trustedCount := proofHasSorryGoalCount results
+    let trustedCount := trustedSmtGoalCount results
     if trustedCount > 0 then
       logWarningAt stx (trustedSmtWarning trustedCount)
+    let admissionCount := results.vcs.filter (fun vc => vc.proofProvenance.any (·.hasAdmissions)) |>.size
+    if admissionCount > 0 then
+      let proofWord := if admissionCount == 1 then "proof" else "proofs"
+      logWarningAt stx m!"Admissions occur in {admissionCount} verification {proofWord}. These admissions are not identified as trusted SMT results."
+    if results.vcs.any (fun vc => vc.proofProvenance.any (·.incomplete)) then
+      logWarningAt stx "Some verification proof dependencies could not be inspected; their provenance is incomplete."
     addUndischargedTheoremSuggestion stx results
 
 private def runFilteredInvariantCheck

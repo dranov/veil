@@ -1,5 +1,6 @@
 import Lean
 import Veil.Base
+import Veil.Core.Tools.Verifier.ProofProvenance
 import Veil.Frontend.DSL.State.SubState
 import Veil.Frontend.DSL.Module.Util
 import Veil.Util.Meta
@@ -910,6 +911,14 @@ def elabVeilSmt (stx : Syntax) (trace : Bool := false) : DesugarTacticM Unit := 
   if trace then
     addSuggestion stx auto_tac
   else
+    if veil.smt.trust.get (← getOptions) then
+      -- Allocate a marked proof hole before the SMT call. Only the admission
+      -- produced in this region is classified as solver trust; referenced
+      -- declarations keep their own provenance.
+      let goal ← getMainGoal
+      let proof ← mkFreshExprMVar (← goal.getType)
+      goal.assign (markTrustedSmtProof proof)
+      replaceMainGoal [proof.mvarId!]
     veilEvalTactic auto_tac
 
 @[inherit_doc veil_destruct_goal]
