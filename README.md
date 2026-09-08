@@ -44,7 +44,7 @@ walkthrough specifications:
   symbolic model checking, counterexample-driven invariant discovery, and an
   interactive Lean proof
 
-These files are also available in the [online playground](#online-playground), under the Examples button.
+These files are also available in the [online playground](https://try.veil.dev), under the Examples button.
 
 An explanation of the constructs of the Veil DSL can be found at
 [`docs/DSL-Reference.md`](docs/DSL-Reference.md). 
@@ -56,7 +56,7 @@ Veil requires [Lean 4](https://github.com/leanprover/lean4) and
 
 ```bash
 # Install Lean
-curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain leanprover/lean4:stable
+curl https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -sSf | sh -s -- -y --default-toolchain none
 
 # Install NodeJS
 curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
@@ -68,18 +68,43 @@ Then, clone Veil:
 
 ```bash
 git clone https://github.com/verse-lab/veil.git
+cd veil
 ```
 
-And, finally, build it:
+The repository's `lean-toolchain` selects the exact Lean version; avoid replacing
+it with a moving `stable` toolchain. On Ubuntu 24.04, install the same native
+cvc5 build dependencies used by CI before building:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y clang-15 lld-15 libc++-15-dev libc++abi-15-dev
+sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang-15 100
+```
+
+Then build and test:
 
 ```bash
 lake exe cache get
 lake build
+lake build VeilTest
 ```
 
 The `lake exe cache get` command downloads a pre-built version of
 [mathlib](https://github.com/leanprover-community/mathlib4), which otherwise
 would take a very long time to build.
+
+### Widget development and maintenance
+
+From `widget/`, `npm ci` installs the locked dependencies, `npm run build`
+checks TypeScript and produces the widget bundles, and `npm run watch-dev`
+watches TypeScript sources and rebuilds their bundles. `npm run watch` does the
+same with production minification. `npm run test:watch` exercises a real source
+edit and a newly imported helper while both watchers are running.
+
+See [profiling instructions](scripts/README-profiling.md) for the standard-library
+Python runner and optional plotting dependencies. The old Docker recipe required
+an untracked archive and has been retired; build from a normal checkout with the
+commands above.
 
 ### Troubleshooting
 

@@ -388,9 +388,9 @@ structure Module where
 
   /-- Implementation detail. Stores the syntax of the command that finalized
   the specification (the set of `procedures` and `assertions` was fixed).
-  This is done explicitly when `#gen_spec` is executed, or implicitly when
-  `#check_invariants` or `#model_check` is invoked. Derived definitions
-  can still be added after this. -/
+  This is done explicitly when `#gen_spec` is executed. Verification and
+  model checking require this finalization; they do not perform it implicitly.
+  Derived definitions can still be added after this. -/
   protected _specFinalizedAt : Option Syntax := none
 
   /-- Assertions can be grouped into "sets", which are checked
