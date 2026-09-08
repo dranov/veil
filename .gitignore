@@ -10,8 +10,16 @@ states/
 
 # Widget build artifacts
 widget/dist/
-widget/node_modules/
+widget/node_modules
 
 # Profiler output
-*.json
 profiles/
+.venv-profiling/
+
+# Generated package-lock tracking files
+widget/package-lock.json.hash
+widget/package-lock.json.trace
+
+# Python tooling caches
+__pycache__/
+*.py[cod]
