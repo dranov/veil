@@ -113,7 +113,7 @@ USAGE:
 
 Runs all `.lean` files under `VeilTest/Performance/` and checks that each
 completes within the timeout specified in its accompanying `.timeout` file
-(in seconds). If no `.timeout` file exists, a default of 20 seconds is used.
+(in seconds). If no `.timeout` file exists, a default of 120 seconds is used. Invalid or zero timeout files are errors.
 
 Example `.timeout` file contents:
 ```
@@ -126,8 +126,8 @@ script perftest do
     IO.println "No VeilTest/Performance/ directory found."
     return 1
   let entries ← perfDir.readDir
-  let tests := entries.filterMap fun e =>
-    if e.path.extension = some "lean" then some e.path else none
+  let tests := (entries.filterMap fun e =>
+    if e.path.extension = some "lean" then some e.path else none).qsort (fun a b => a.toString < b.toString)
   if tests.isEmpty then
     IO.println "No performance tests found in VeilTest/Performance/."
     return 0
@@ -159,7 +159,11 @@ where
     let timeoutFile := test.withExtension "timeout"
     if ← timeoutFile.pathExists then
       let content ← IO.FS.readFile timeoutFile
-      return content.trimAscii.toNat?.getD 20
+      let some seconds := content.trimAscii.toNat?
+        | throw (IO.userError s!"Invalid timeout in {timeoutFile}: expected positive seconds")
+      if seconds == 0 then
+        throw (IO.userError s!"Invalid timeout in {timeoutFile}: expected positive seconds")
+      return seconds
     else return 120
   runWithTimeout (cmd : String) (args : Array String)
       (env : Array (String × Option String)) (timeoutMs : Nat)
@@ -177,23 +181,22 @@ where
     let stderrTask ← IO.asTask child.stderr.readToEnd
     -- Track process completion via shared flag
     let doneRef ← IO.mkRef false
-    let exitCodeRef ← IO.mkRef (0 : UInt32)
-    let _ ← IO.asTask do
-      let code ← child.wait
-      exitCodeRef.set code
-      doneRef.set true
+    let waitTask ← IO.asTask do
+      try child.wait finally doneRef.set true
     -- Poll until done or timeout
     let startTime ← IO.monoMsNow
     let mut timedOut := false
     repeat
       if ← doneRef.get then break
-      IO.sleep 1000
+      IO.sleep 20
       let elapsed := (← IO.monoMsNow) - startTime
-      if elapsed > timeoutMs then
+      if elapsed >= timeoutMs then
         timedOut := true
-        child.kill
+        try child.kill catch error =>
+          if !(← doneRef.get) then throw error
         break
-    let exitCode ← exitCodeRef.get
+    -- Reap the child and observe the actual exit result before returning.
+    let exitCode ← IO.ofExcept waitTask.get
     let stdout ← IO.ofExcept stdoutTask.get
     let stderr ← IO.ofExcept stderrTask.get
     let elapsed := (← IO.monoMsNow) - startTime
