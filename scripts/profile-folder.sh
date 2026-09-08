@@ -200,3 +200,8 @@ echo "  ./scripts/parse-profile.py \$(cat $PROFILES_FILE) --exclude veil.perf.di
 
 # Aggregate results from all successful profiles
 show_aggregated_results "complete"
+
+# Preserve partial reports, but never report success when a child compiler failed.
+if [[ "$FAIL_COUNT" -gt 0 ]]; then
+    exit 1
+fi
