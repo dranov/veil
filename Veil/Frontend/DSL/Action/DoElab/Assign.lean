@@ -358,6 +358,21 @@ private def elabPinnedStateAssignment (mod : Module) (component : StateComponent
     (target : Target) (caps : Array (Option Name)) (rhs : Term)
     (ref : Syntax) (dec : DoElemCont) : DoElabM Expr := do
   let domainSize := component.domainTerms.size
+  let mut target := target
+  let mut caps := caps
+  let mut rhs := rhs
+  if component.isPartialFunction && target.args.size == domainSize && caps.back! == none then
+    -- A true point assignment replaces the input's entire row. A false point
+    -- assignment only removes that edge. Widen the output coordinate to a
+    -- universal update, retaining the old row wherever the RHS is false and
+    -- the output differs. Fixed indices have already been pinned once.
+    let output := target.args.back!
+    let candidate ← mkFreshUserName (mkVeilImplementationDetailName `output)
+    target := { target with args := target.args.set! (domainSize - 1) (mkIdent candidate) }
+    caps := caps.set! (domainSize - 1) (some candidate)
+    let old := Syntax.mkApp (mkIdent component.name) target.args
+    rhs ← `(term| if $(mkIdent candidate) = $output then ($rhs : Bool)
+      else if ($rhs : Bool) then false else $old)
   let domainArgs := target.args.take domainSize
   let replacement ← mkAssignmentReplacement component domainArgs
     (target.args.drop domainSize) (caps.take domainSize) rhs

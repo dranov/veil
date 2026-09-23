@@ -115,7 +115,6 @@ See `Std.lean` for the complete list of type classes.
 ### 4. State and Theory Components
 
 State components define the **signature** of your transition system.
-There are three kinds:
 
 #### Individuals
 
@@ -148,6 +147,44 @@ Total functions from domain to codomain:
 function currentRound : node -> Nat
 immutable function nextNode : node -> node
 ```
+
+#### Partial Functions
+
+A partial function has at most one output for each input. An input can have no
+output:
+
+```lean
+partial function owner : vertex -> node
+partial function entry : node -> round -> value
+immutable partial function parent (child : node) : node
+```
+
+These declarations create Boolean relations: `owner v n` tests whether vertex
+`v` maps to node `n`. Use a guarded choice such as `if n :| owner v n then ...`
+to read an output that might be absent. There is no totality axiom or implicit
+default output.
+
+Point assignments maintain the functional interpretation:
+
+```lean
+owner v n := true      -- replace any previous output of v with n
+owner v n := false     -- remove this edge, preserving a different output
+owner v N := false     -- remove every output of v
+owner V n := true      -- map every vertex to n
+owner V N := false     -- clear the entire partial function
+```
+
+A Boolean expression on the right follows the same rule: true replaces the
+output; false removes only the specified edge. Arrow assignments and point
+havoc use this rule too. Updates with a universal output index, whole-field
+assignments, and whole-field havoc retain ordinary relation semantics.
+
+Veil generates `<name>_coherence`, requiring that two outputs for the same input
+are equal. For mutable partial functions this is an **invariant to verify**:
+initialization, bulk updates, havoc, and relational transitions must establish
+or preserve it. For immutable partial functions it is a background assumption,
+also checked against the theory supplied to the model checker. Partial functions
+use the configured **relation** field representation.
 
 #### Mutability
 

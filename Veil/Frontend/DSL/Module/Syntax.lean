@@ -177,6 +177,7 @@ Functions can also be defined with names for the arguments, e.g.
 `function currentRound (n : address) : round`
 -/
 scoped syntax (name := functionStateComponent) kw_function : stateComponentKind
+scoped syntax (name := partialFunctionStateComponent) "partial" kw_function : stateComponentKind
 
 /-- This state component is the state of another module. -/
 scoped syntax (name := moduleStateComponent) kw_module : stateComponentKind

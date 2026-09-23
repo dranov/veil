@@ -247,6 +247,10 @@ structure StateComponent where
   mutability : Mutability
   /-- Is this an `individual`, a `relation`, or ` function`?-/
   kind          : StateComponentKind
+  /-- A partial function is stored as a relation whose last coordinate is the
+  output. Its coherence assertion and point-assignment semantics are generated
+  by the frontend; field representations still treat it as a relation. -/
+  isPartialFunction : Bool := false
   /-- The name of the state component -/
   name          : Name
   /-- The Lean syntax that declares the type of this state component -/

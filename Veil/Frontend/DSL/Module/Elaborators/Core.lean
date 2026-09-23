@@ -127,14 +127,26 @@ where
   (mod : Module) (mutability : Option (TSyntax `stateMutability)) (kind : TSyntax `stateComponentKind)
   (name : Ident) (br : TSyntaxArray ``Term.bracketedBinder) (dom : Term) (userStx : Syntax) : CommandElabM Module := do
     let mutability := Mutability.fromStx mutability
+    let isPartialFunction := kind.raw.isOfKind ``partialFunctionStateComponent
     let kind := StateComponentKind.fromStx kind
-    let sctype ← (
+    let mut sctype ← (
       if br.isEmpty then
         return StateComponentType.simple (← `(Command.structSimpleBinder|$name:ident : $dom))
       else
         return StateComponentType.complex br dom)
     let (domainTerms, codomainTerm) ← analyzeTypesOfStateComponents sctype
-    let sc : StateComponent := { mutability := mutability, kind := kind, name := name.getId, «type» := sctype, userSyntax := userStx, domainTerms, codomainTerm }
+    let mut domainTerms := domainTerms
+    let mut codomainTerm := codomainTerm
+    if isPartialFunction then
+      if domainTerms.isEmpty then
+        throwErrorAt userStx "a partial function needs at least one input type and an output type"
+      domainTerms := domainTerms.push codomainTerm
+      codomainTerm ← `(term| Bool)
+      let graphType ← mkArrowStx domainTerms.toList (some codomainTerm)
+      sctype := .simple (← `(Command.structSimpleBinder|$name:ident : $graphType))
+    let sc : StateComponent := {
+      mutability := mutability, kind := kind, isPartialFunction := isPartialFunction
+      name := name.getId, «type» := sctype, userSyntax := userStx, domainTerms, codomainTerm }
     Module.declareStateComponent mod sc
   /-- For each `sc` in `components`, analyze its type to extract the arguments
   (domain) and codomain. -/
@@ -235,6 +247,32 @@ private def generateIgnoreFn (mod : Module) : CommandElabM Unit := do
   elabVeilCommand cmd
 
 
+/-- Partial functions have at most one output per input, but need not have an
+output. For mutable fields this is an ordinary proof obligation, not a trusted
+invariant: bulk assignments and relational transitions must preserve it too. -/
+private def Module.definePartialFunctionCoherence (mod : Module) : CommandElabM Module := do
+  let mut mod := mod
+  for component in mod.signature do
+    if !component.isPartialFunction then continue
+    mod ← withRef component.userSyntax do
+      let inputTypes := component.domainTerms.pop
+      let outputType := component.domainTerms.back!
+      let inputs ← inputTypes.mapM fun _ => do
+        return Lean.mkIdent (← liftCoreM <| mkFreshUserName `input)
+      let left := Lean.mkIdent (← liftCoreM <| mkFreshUserName `output)
+      let right := Lean.mkIdent (← liftCoreM <| mkFreshUserName `output)
+      let leftApp := Syntax.mkApp (mkIdent component.name) (inputs.push left)
+      let rightApp := Syntax.mkApp (mkIdent component.name) (inputs.push right)
+      let mut prop ← `(term| ∀ ($left:ident $right:ident : $outputType),
+        $leftApp → $rightApp → $left:ident = $right:ident)
+      for (input, tp) in (inputs.zip inputTypes).reverse do
+        prop ← `(term| ∀ ($input:ident : $tp), $prop)
+      let name ← `(propertyName| [$(mkIdent <| component.name.appendAfter "_coherence")])
+      let kind := if component.isMutable then StateAssertionKind.invariant else .assumption
+      let assertion ← mod.mkAssertion kind (some name) prop component.userSyntax
+      mod.defineAssertion assertion
+  return mod
+
 /-- Crystallizes the state of the module, i.e. it defines it as a Lean
 `structure` definition, if that hasn't already happened. -/
 def Module.ensureStateIsDefined (mod : Module) : CommandElabM Module := do
@@ -264,7 +302,7 @@ def Module.ensureStateIsDefined (mod : Module) : CommandElabM Module := do
       elabVeilCommand cmd
     catch ex =>
       logWarning m!"unable to generate transition weakening lemma: {ex.toMessageData}"
-  pure mod
+  mod.definePartialFunctionCoherence
 
 /-- Generate the executable definitions with `cfg`, unless the module has them already (whatever
 options they were generated with). -/
