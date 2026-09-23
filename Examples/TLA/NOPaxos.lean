@@ -120,14 +120,12 @@ param maxSeq : Nat
 -- also note that in TLA, the list indices are 1-based
 
 type replica
-type replicaSet
+set_type replicaSet : replica
 type value
-instantiate rSet : TSet replica replicaSet
 
 enum ReplicaStatus = {StNormal, StViewChange, StGapCommit}
 
-type MsgSet
-instantiate mSet : TSet (NOPaxosMsg replica value maxSeq) MsgSet
+set_type MsgSet : NOPaxosMsg replica value maxSeq
 
 individual messages : MsgSet
 
@@ -163,15 +161,15 @@ after_init {
   vViewID R := initView
   vLastNormView R := initView
   vSessMsgNum R := 1
-  vViewChanges R := mSet.empty
-  vGapCommitReps R := mSet.empty
+  vViewChanges R := ∅
+  vGapCommitReps R := ∅
   vCurrentGapSlot R := 0
   vReplicaStatus R := StNormal
   vSyncPoint R := 0
   vTentativeSync R := 0
-  vSyncReps R := mSet.empty
+  vSyncReps R := ∅
 
-  messages := mSet.empty
+  messages := ∅
   seqMsgNums S := 1
 }
 
@@ -195,7 +193,7 @@ ghost relation ViewLt (v1 v2 : View (SeqTy maxSeq)) :=
 -- \* Add a message to the network
 -- Send(ms) == messages' = messages \cup ms
 procedure Send (ms : MsgSet) {
-  messages := mSet.union messages ms
+  messages := messages ∪ ms
 }
 
 -- \* `^\textbf{Log Manipulation Helpers}^'
@@ -256,16 +254,15 @@ procedure SendGapCommit (r : replica) {
   require Leader (vViewID r) = r
   require vReplicaStatus r = StNormal
   vReplicaStatus r := StGapCommit
-  vGapCommitReps r := mSet.empty
+  vGapCommitReps r := ∅
   vCurrentGapSlot r := slot
-  let msgs := replicaEnumerable.allValues.map fun d =>
-    Msg.gapCommit d (vViewID r) slot
-  Send <| mSet.ofList msgs
+  let msgs : MsgSet := {Msg.gapCommit d (vViewID r) slot | d ∈ (TSet.univ replica : replicaSet)}
+  Send msgs
 }
 
 -- Quorums == {R \in SUBSET(Replicas) : Cardinality(R) * 2 > Cardinality(Replicas)}
 ghost relation isQuorum (R : replicaSet) :=
-  rSet.count R * 2 > replicaEnumerable.allValues.length
+  card R * 2 > typeCard replica
 
 -- (*
 --   A request is committed if a quorum sent replies with matching view-id and
@@ -286,22 +283,13 @@ ghost relation isQuorum (R : replicaSet) :=
 --     \* One from the leader
 --     /\ \E m \in M : m.sender = Leader(m.viewID)
 ghost relation Committed (v : value) (i : Nat) :=
-  let submsgs := mSet.filter messages fun m =>
-    match m with
+  let matchingMsgs := {m ∈ messages | (match m with
     | .requestReply _ _ req lsn => req == v && lsn == i
-    | _ => false
-  ∃ M : { M // mSet.isSubset M submsgs } ,
-    let M := M.val
-    (isQuorum <| mSet.filterMap (target_set := rSet) M fun m =>
-      match m with
-      | .requestReply sender .. => some sender
-      | _ => none) ∧
-    (∃ m1 : { m // m ∈ M }, ∀ m2 : { m // m ∈ M }, (match m1.val, m2.val with
-      | .requestReply _ vid1 .., .requestReply _ vid2 .. => decide $ vid1 = vid2
-      | _, _ => false) = true) ∧
-    (∃ m : { m // m ∈ M }, (match m.val with
-      | .requestReply sender vid .. => decide $ sender = Leader vid
-      | _ => false) = true)
+    | _ => false) = true}
+  ∃ m1 ∈ matchingMsgs,
+    let sameViewMsgs := {m ∈ matchingMsgs | m.viewID = m1.viewID}
+    TSet.countDistinct sameViewMsgs Msg.sender * 2 > typeCard replica ∧
+    (∃ m2 ∈ sameViewMsgs, m2.sender = Leader m1.viewID)
 
 -- Linearizability ==
 --   LET
@@ -314,15 +302,13 @@ ghost relation Committed (v : value) (i : Nat) :=
 --            /\ Committed(v2, i)
 --       )
 ghost relation Linearizability :=
-  let logSlotNums := mSet.toList messages |>.filterMap fun m =>
+  let logSlotNums := TSet.toList messages |>.filterMap fun m =>
     match m with
     | .requestReply _ _ _ lsn => some lsn
     | _ => none
   let maxLogPosition := (1 :: logSlotNums).max (List.cons_ne_nil _ _)
-  ¬ (∃ v1 v2 : value,
-      v1 ≠ v2 ∧
-      -- NOTE: Write in this way to allow Lean to synthesize `Decidable` instance
-      ∃ i ≤ maxLogPosition, 1 ≤ i ∧ Committed v1 i ∧ Committed v2 i)
+  let positions : OrdList Nat := {1 ..= maxLogPosition}
+  ¬ (∃ v1 v2 : value, v1 ≠ v2 ∧ ∃ i ∈ positions, Committed v1 i ∧ Committed v2 i)
 
 -- \* `^\textbf{Client action}^'
 -- \* Send a request for value v
@@ -330,9 +316,9 @@ ghost relation Linearizability :=
 --                                     value |-> v ]})
 --                          /\ UNCHANGED << sequencerVars, replicaVars >>
 action ClientSendsRequest (v : value) {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   require v ≠ NoOp
-  Send <| mSet.ofList [Msg.clientRequest v]
+  Send <| {Msg.clientRequest v}
 }
 
 -- \* `^\textbf{Normal Case Handlers}^'
@@ -349,13 +335,12 @@ action ClientSendsRequest (v : value) {
 --   /\ seqMsgNums' = [ seqMsgNums EXCEPT ![s] = smn + 1 ]
 --   /\ UNCHANGED replicaVars
 action HandleClientRequest (s : SeqTy maxSeq) {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let smn := seqMsgNums s
   let m :| m ∈ messages
   assume m matches .clientRequest ..
-  let toSent := replicaEnumerable.allValues.map fun r =>
-    Msg.markedClientRequest r m.value s smn
-  Send <| mSet.ofList toSent
+  let toSent : MsgSet := {Msg.markedClientRequest r m.value s smn | r ∈ (TSet.univ replica : replicaSet)}
+  Send toSent
   seqMsgNums s := smn + 1
 }
 
@@ -401,7 +386,7 @@ action HandleClientRequest (s : SeqTy maxSeq) {
 --                          sessMsgNum |-> vSessMsgNum[r] ]})
 --               /\ UNCHANGED << replicaVars, sequencerVars >>
 action HandleMarkedClientRequest {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .markedClientRequest ..
   let r := m.dest
@@ -415,16 +400,15 @@ action HandleMarkedClientRequest {
     vLog r := (vLog r).push mValue
     vSessMsgNum r := vSessMsgNum r + 1
     let replyMsg := Msg.requestReply r (vViewID r) mValue (vLog r).size
-    Send <| mSet.ofList [replyMsg]
+    Send <| {replyMsg}
   else
     -- SESSION-TERMINATED Case: m.sessNum > vViewID[r].sessNum
     if mSessNum > (vViewID r).sessNum then
       let newViewID : View (SeqTy maxSeq) := {
         sessNum   := mSessNum,
         leaderNum := (vViewID r).leaderNum }
-      let viewChangeReqMsgs := replicaEnumerable.allValues.map fun d =>
-        Msg.viewChangeReq d newViewID
-      Send <| mSet.ofList viewChangeReqMsgs
+      let viewChangeReqMsgs : MsgSet := {Msg.viewChangeReq d newViewID | d ∈ (TSet.univ replica : replicaSet)}
+      Send viewChangeReqMsgs
     -- DROP-NOTIFICATION Case: m.sessNum = vViewID[r].sessNum /\ m.sessMsgNum > vSessMsgNum[r]
     else
       require mSessNum = (vViewID r).sessNum
@@ -434,7 +418,7 @@ action HandleMarkedClientRequest {
         SendGapCommit r
       else
         let slotLookupMsg := Msg.slotLookup leader r (vViewID r) (vSessMsgNum r)
-        Send <| mSet.ofList [slotLookupMsg]
+        Send <| {slotLookupMsg}
 }
 
 -- \* `^\textbf{Gap Commit Handlers}^'
@@ -456,7 +440,7 @@ action HandleMarkedClientRequest {
 --      \/ /\ logSlotNum = Len(vLog[r]) + 1
 --         /\ SendGapCommit(r)
 action HandleSlotLookup {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .slotLookup ..
   let r := m.dest
@@ -472,7 +456,7 @@ action HandleSlotLookup {
   if logSlotNum ≤ (vLog r).size then
     let msg := Msg.markedClientRequest mSender
       ((vLog r)[logSlotNum - 1]!) (vViewID r).sessNum mSessMsgNum
-    Send <| mSet.ofList [msg]
+    Send <| {msg}
   else
     require logSlotNum = (vLog r).size + 1
     SendGapCommit r
@@ -504,7 +488,7 @@ action HandleSlotLookup {
 --                   vReplicaStatus, vLastNormView, vViewChanges,
 --                   vSyncPoint, vTentativeSync, vSyncReps >>
 action HandleGapCommit {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .gapCommit ..
   let r := m.dest
@@ -522,12 +506,12 @@ action HandleGapCommit {
   let gapCommitRepMsg := Msg.gapCommitRep
     (Leader (vViewID r)) r (vViewID r) mSlotNumber
   let requestReplyMsg := Msg.requestReply r (vViewID r) NoOp mSlotNumber
-  Send <| mSet.ofList [gapCommitRepMsg, requestReplyMsg]
+  Send <| {gapCommitRepMsg, requestReplyMsg}
 }
 
 ghost relation isViewPromise (r : replica) (M : MsgSet) :=
-  (isQuorum <| mSet.map (target_set := rSet) M Msg.sender) ∧
-  (∃ n : { n // n ∈ M }, n.val.sender = r)
+  TSet.countDistinct M Msg.sender * 2 > typeCard replica ∧
+  (∃ n ∈ M, n.sender = r)
 
 -- \* Replica r receives GapCommitRep, m
 -- HandleGapCommitRep(r, m) ==
@@ -553,7 +537,7 @@ ghost relation isViewPromise (r : replica) (M : MsgSet) :=
 --                   vSessMsgNum, vLastNormView, vViewChanges, vSyncPoint,
 --                   vTentativeSync, vSyncReps >>
 action HandleGapCommitRep {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .gapCommitRep ..
   let r := m.dest
@@ -564,8 +548,8 @@ action HandleGapCommitRep {
   require mViewID = vViewID r
   require Leader (vViewID r) = r
   require mSlotNumber = vCurrentGapSlot r
-  vGapCommitReps r := mSet.insert m (vGapCommitReps r)
-  let gCRs := mSet.filter (vGapCommitReps r) (fun n =>
+  vGapCommitReps r := insert m (vGapCommitReps r)
+  let gCRs := TSet.filter (vGapCommitReps r) (fun n =>
     match n with
     | .gapCommitRep _ _ vid sn =>
       vid == vViewID r && sn == vCurrentGapSlot r
@@ -586,13 +570,12 @@ action HandleGapCommitRep {
 --              viewID |-> newViewID ] : d \in Replicas})
 --   /\ UNCHANGED << replicaVars, sequencerVars >>
 action StartLeaderChange (r : replica) {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let newViewID : View (SeqTy maxSeq) :=
     { sessNum   := (vViewID r).sessNum,
       leaderNum := (vViewID r).leaderNum + 1 }
-  let msgs := replicaEnumerable.allValues.map fun d =>
-    Msg.viewChangeReq d newViewID
-  Send <| mSet.ofList msgs
+  let msgs : MsgSet := {Msg.viewChangeReq d newViewID | d ∈ (TSet.univ replica : replicaSet)}
+  Send msgs
 }
 
 -- \* `^\textbf{View Change Handlers}^'
@@ -623,7 +606,7 @@ action StartLeaderChange (r : replica) {
 --                   vLastNormView, sequencerVars, vSyncPoint,
 --                   vTentativeSync, vSyncReps >>
 action HandleViewChangeReq {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .viewChangeReq ..
   let r := m.dest
@@ -636,12 +619,12 @@ action HandleViewChangeReq {
   require currentViewID ≠ newViewID
   vReplicaStatus r := StViewChange
   vViewID r := newViewID
-  vViewChanges r := mSet.empty
+  vViewChanges r := ∅
   let viewChangeMsg := Msg.viewChange
     (Leader newViewID) r newViewID (vLastNormView r) (vSessMsgNum r) (vLog r)
   let viewChangeReqMsgs := replicaEnumerable.allValues.map fun d =>
     Msg.viewChangeReq d newViewID
-  Send <| mSet.ofList (viewChangeMsg :: viewChangeReqMsgs)
+  Send <| TSet.ofList (viewChangeMsg :: viewChangeReqMsgs)
 }
 
 -- \* Replica r receives MViewChange, m
@@ -685,7 +668,7 @@ action HandleViewChangeReq {
 --                   vGapCommitReps, vLastNormView, sequencerVars, vSyncPoint,
 --                   vTentativeSync, vSyncReps >>
 action HandleViewChange {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .viewChange ..
   let r := m.dest
@@ -694,15 +677,15 @@ action HandleViewChange {
   require vViewID r = mViewID
   require vReplicaStatus r = StViewChange
   require Leader (vViewID r) = r
-  vViewChanges r := mSet.insert m (vViewChanges r)
-  let vCMs := mSet.filter (vViewChanges r) (fun n =>
+  vViewChanges r := insert m (vViewChanges r)
+  let vCMs := TSet.filter (vViewChanges r) (fun n =>
     match n with
     | .viewChange _ _ vid _ _ _ => vid == vViewID r
     | _ => false)
 
   if isViewPromise r vCMs then
     -- Find the maximum lastNormal view
-    let vCMsList := mSet.toList vCMs
+    let vCMsList := TSet.toList vCMs
     let normalViews := vCMsList.filterMap fun n =>
       match n with
       | .viewChange _ _ _ ln _ _ => some ln
@@ -724,9 +707,8 @@ action HandleViewChange {
         tmp.max? |>.getD 0
       else
         0
-    let startViewMsgs := replicaEnumerable.allValues.map fun d =>
-      Msg.startView d (vViewID r) (CombineLogs goodLogs) newMsgNum
-    Send <| mSet.ofList startViewMsgs
+    let startViewMsgs : MsgSet := {Msg.startView d (vViewID r) (CombineLogs goodLogs) newMsgNum | d ∈ (TSet.univ replica : replicaSet)}
+    Send startViewMsgs
 }
 
 -- \* Replica r receives a MStartView, m
@@ -752,7 +734,7 @@ action HandleViewChange {
 --                   vViewChanges, vCurrentGapSlot, vGapCommitReps, vSyncPoint,
 --                   vTentativeSync, vSyncReps >>
 action HandleStartView {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .startView ..
   let r := m.dest
@@ -769,7 +751,7 @@ action HandleStartView {
 
   let requestReplyMsgs := (List.range mLog.size).map fun i =>
       Msg.requestReply r mViewID (mLog[i]!) (i + 1)
-  Send <| mSet.ofList requestReplyMsgs
+  Send <| TSet.ofList requestReplyMsgs
 }
 
 -- \* `^\textbf{Synchronization handlers}^'
@@ -789,14 +771,13 @@ action HandleStartView {
 --                   vCurrentGapSlot, vViewChanges, vReplicaStatus,
 --                   vGapCommitReps, vSyncPoint >>
 action StartSync (r : replica) {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   require Leader (vViewID r) = r
   require vReplicaStatus r = StNormal
-  vSyncReps r := mSet.empty
+  vSyncReps r := ∅
   vTentativeSync r := (vLog r).size
-  let msgs := replicaEnumerable.allValues.map fun d =>
-    Msg.syncPrepare d r (vViewID r) (vSessMsgNum r) (vLog r)
-  Send <| mSet.ofList msgs
+  let msgs : MsgSet := {Msg.syncPrepare d r (vViewID r) (vSessMsgNum r) (vLog r) | d ∈ (TSet.univ replica : replicaSet)}
+  Send msgs
 }
 
 -- \* Replica r receives MSyncPrepare, m
@@ -824,7 +805,7 @@ action StartSync (r : replica) {
 --                   vViewChanges, vReplicaStatus, vGapCommitReps,
 --                   vSyncPoint, vTentativeSync, vSyncReps >>
 action HandleSyncPrepare {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .syncPrepare ..
   let r := m.dest
@@ -845,7 +826,7 @@ action HandleSyncPrepare {
   let requestReplyMsgs :=
     (List.range newLog.size).map fun i =>
       Msg.requestReply r (vViewID r) (newLog[i]!) (i + 1)
-  Send <| mSet.ofList (syncRepMsg :: requestReplyMsgs)
+  Send <| TSet.ofList (syncRepMsg :: requestReplyMsgs)
 }
 
 -- \* Replica r receives MSyncRep, m
@@ -879,7 +860,7 @@ action HandleSyncPrepare {
 --                   vCurrentGapSlot, vViewChanges, vReplicaStatus,
 --                   vGapCommitReps, vSyncPoint, vTentativeSync >>
 action HandleSyncRep {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .syncRep ..
   let r := m.dest
@@ -887,8 +868,8 @@ action HandleSyncRep {
 
   require mViewID = vViewID r
   require vReplicaStatus r = StNormal
-  vSyncReps r := mSet.insert m (vSyncReps r)
-  let sRMs := mSet.filter (vSyncReps r) (fun n =>
+  vSyncReps r := insert m (vSyncReps r)
+  let sRMs := TSet.filter (vSyncReps r) (fun n =>
     match n with
     | .syncRep _ _ vid lsn =>
       vid == vViewID r && lsn == vTentativeSync r
@@ -898,10 +879,8 @@ action HandleSyncRep {
         (vLog r).extract 0 (vTentativeSync r)
       else
         #[]
-    let syncCommitMsgs := replicaEnumerable.allValues.map fun d =>
-      Msg.syncCommit d r (vViewID r) committedLog
-        (vSessMsgNum r - ((vLog r).size - committedLog.size))
-    Send <| mSet.ofList syncCommitMsgs
+    let syncCommitMsgs : MsgSet := {Msg.syncCommit d r (vViewID r) committedLog (vSessMsgNum r - ((vLog r).size - committedLog.size)) | d ∈ (TSet.univ replica : replicaSet)}
+    Send syncCommitMsgs
 }
 
 -- \* Replica r receives MSyncCommit, m
@@ -920,7 +899,7 @@ action HandleSyncRep {
 --                   vCurrentGapSlot, vViewChanges, vReplicaStatus,
 --                   vGapCommitReps, vTentativeSync, vSyncReps >>
 action SyncCommit {
-  require mSet.count messages ≤ MsgCountLimit
+  require card messages ≤ MsgCountLimit
   let m :| m ∈ messages
   assume m matches .syncCommit ..
   let r := m.dest
@@ -946,8 +925,8 @@ invariant [linearizability] Linearizability
 -- SyncSafety
 invariant [sync_safety]
   ∀ (r : replica),
-    ∀ i < vSyncPoint r,
-      Committed ((vLog r)[i]!) (i + 1)
+    let positions : OrdList Nat := {1 ..= vSyncPoint r}
+    ∀ i ∈ positions, Committed ((vLog r)[i - 1]!) i
 
 -- NOTE: state constraint not really applicable here
 
