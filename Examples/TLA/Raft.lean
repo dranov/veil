@@ -126,7 +126,7 @@ relation pcState : server → serverStates → Bool
 -- \* The candidate the server voted for in its current term, or
 -- \* Nil if it hasn't voted for any.
 -- VARIABLE votedFor
-relation votedFor : server → server → Bool
+partial function votedFor : server → server
 -- serverVars == <<currentTerm, state, votedFor>>
 
 -- \* The set of requests that can go into the log
@@ -656,7 +656,7 @@ procedure HandleRequestVoteRequest (i : server) (j : server) (m : Message value 
   let lastTerm_i ← LastTerm (logs i)
   let isGrant := grant m i j lastTerm_i
   if decide isGrant then
-    votedFor i R := R == j
+    votedFor i j := true
   let response : Message value server :=
     { mtype         := .RequestVoteResponse,
       mterm         := currentTerm i,
