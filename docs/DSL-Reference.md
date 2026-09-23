@@ -155,6 +155,16 @@ enumeration of the element type. Both forms include every matching member and
 exclude every nonmatching one. Whole-type comprehensions require
 `Enumeration node`; ordinary `type node` declarations do not assume finiteness.
 
+Set images use `{f x | x ∈ S}`; Cartesian products use `S ×ˢ T`. Record
+families are images too, for example
+`({{ sender := me, receiver := n } | n ∈ nodes} : Messages)`. These operations
+traverse their inputs and remove duplicates in the result. An expected result
+carrier takes precedence. Otherwise, images preserve the source carrier when the
+element type is unchanged, use a unique matching local `TSet` carrier when one
+exists, and fall back to `Std.ExtTreeSet` for concretely ordered output types.
+Ambiguous carriers require an annotation. Products use the same result-carrier
+inference for their pair type.
+
 State components define the **signature** of your transition system.
 
 #### Individuals
