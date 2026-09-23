@@ -3,6 +3,7 @@ module
 public meta import Lean
 public meta import Lean.Meta.Tactic.TryThis
 public meta import Veil.Base
+public meta import Veil.Frontend.Collections.Basic
 public meta import Veil.Frontend.DSL.Module.Syntax
 public meta import Veil.Frontend.DSL.Infra.EnvExtensions
 public meta import Veil.Frontend.DSL.Module.Util
@@ -109,11 +110,16 @@ def elabSetTypeDeclaration : CommandElab := fun stx => do
   let inst : Parameter := {
     kind := .moduleTypeclass .userDefined, name := instName
     «type» := ← `(TSet $elem $id), userSyntax := stx }
+  let lawsName := id.getId.appendAfter "_laws"
+  mod.throwIfAlreadyDeclared lawsName
+  let laws : Parameter := {
+    kind := .moduleTypeclass .userDefined, name := lawsName
+    «type» := ← `(LawfulTSet $elem $id), userSyntax := stx }
   let parameters := mod.parameters.map fun p =>
     if p.name == id.getId then { p with setElementType := some elem } else p
   localEnv.modifyModule fun _ => { mod with
-    parameters := parameters.push inst
-    _declarations := mod._declarations.insert instName .moduleParameter }
+    parameters := (parameters.push inst).push laws
+    _declarations := (mod._declarations.insert instName .moduleParameter).insert lawsName .moduleParameter }
 
 @[command_elab Veil.parameterDeclaration]
 def elabParameterDeclaration : CommandElab := fun stx => do

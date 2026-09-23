@@ -129,6 +129,19 @@ defaults `Nodes` to `Std.ExtTreeSet` of the instantiated node type, so
 `{ node := Fin 3, Nodes := OrdList (Fin 3) }` when desired. Nested declarations
 such as `set_type Families : Nodes` receive corresponding nested defaults.
 
+Set values support `∅`, `{x}`, `{x, y, z}`, `insert x S`, `S ∪ T`, `S ∩ T`,
+`S \ T`, and `S ⊆ T`. Membership remains `x ∈ S`. `TSet.Nonempty S` and
+`TSet.Disjoint S T` are decidable by inspecting the sets, even when their element
+type is infinite. These operations also work with manually declared `TSet` carriers.
+
+`set_type` additionally supplies `Nodes_laws : LawfulTSet node Nodes`. This provides
+extensional equality (`TSet.ext`), membership laws for filters/intersections/list
+construction, duplicate-free enumeration, and the relationship between cardinality
+and enumeration length. The tree-set, sorted-list, and sorted-array carriers all
+satisfy these laws; custom carriers can implement `LawfulTSet` alongside `TSet`.
+The laws support ordinary Lean proofs with `simp` and `TSet.ext`; higher-order
+collection operations may require a Lean proof rather than automatic SMT discharge.
+
 State components define the **signature** of your transition system.
 
 #### Individuals
