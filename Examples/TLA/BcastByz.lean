@@ -27,8 +27,7 @@ The protocol works as follows:
 veil module BcastByz
 
 type process
-type procSet
-instantiate pset : TSet process procSet
+set_type procSet : process
 -- instantiate thread : Fintype process
 
 enum PCState = { V0, V1, SE, AC }
@@ -69,8 +68,8 @@ veil_set_field_representation function Veil.ArrayAsFinmap
 #gen_state
 
 -- Ghost definitions for readability
-ghost relation isCorrect (p : process) := pset.contains p Corr
-ghost relation isFaulty (p : process) := pset.contains p Faulty
+ghost relation isCorrect (p : process) := p ∈ Corr
+ghost relation isFaulty (p : process) := p ∈ Faulty
 -- Initial state
 
 -- Init ==
@@ -81,13 +80,13 @@ ghost relation isFaulty (p : process) := pset.contains p Faulty
 --   /\ Cardinality(Corr) = N - F          (* N - F processes are correct, but their identities are unknown*)
 --   /\ Faulty = Proc \ Corr               (* The rest (F) are faulty*)
 after_init {
-  sent := pset.empty
-  rcvd P := pset.empty
-  let V1Set ← pick procSet
-  pc P := if pset.contains P V1Set then V1 else V0
-  let corrSet :| pset.count corrSet = N - F
+  sent := ∅
+  rcvd P := ∅
+  let V1Set ⊆ (TSet.univ process : procSet)
+  pc P := if P ∈ V1Set then V1 else V0
+  let corrSet ⊆ (TSet.univ process : procSet) :| card corrSet = N - F
   Corr := corrSet
-  Faulty := pset.diff (pset.ofList processEnumerable.allValues) Corr
+  Faulty := (TSet.univ process : procSet) \ Corr
 }
 
 -- ByzMsgs == Faulty \X M
@@ -98,9 +97,9 @@ after_init {
 -- ReceiveFromCorrectSender(self) == Receive(self, FALSE)
 -- ReceiveFromAnySender(self) == Receive(self, TRUE)
 procedure Receive (self : process) (includeByz : Bool) {
-  let superSet := if includeByz then pset.union sent Faulty else sent
-  let newMessages :| pset.isSubset newMessages superSet
-  rcvd self := pset.union (rcvd self) newMessages
+  let superSet := if includeByz then sent ∪ Faulty else sent
+  let newMessages ⊆ superSet
+  rcvd self := rcvd self ∪ newMessages
 }
 
 -- NOTE: `ReceiveFromCorrectSender` is not used in the `Step` part
@@ -129,7 +128,7 @@ action Step_UponV1 (self : process) {
   require pc self = V1
   ReceiveFromAnySender self
   pc self := SE
-  sent := pset.insert self sent
+  sent := insert self sent
 }
 
 -- UponNonFaulty(self) ==
@@ -143,10 +142,10 @@ action Step_UponNonFaulty (self : process) {
   require isCorrect self
   require pc self ∈ [V0, V1]
   ReceiveFromAnySender self
-  assume pset.count (rcvd self) ≥ N - 2 * T
-  assume pset.count (rcvd self) < N - T
+  assume card (rcvd self) ≥ N - 2 * T
+  assume card (rcvd self) < N - T
   pc self := SE
-  sent := pset.insert self sent
+  sent := insert self sent
 }
 
 -- UponAcceptNotSentBefore(self) ==
@@ -159,9 +158,9 @@ action Step_UponAcceptNotSentBefore (self : process) {
   require isCorrect self
   require pc self ∈ [V0, V1]
   ReceiveFromAnySender self
-  assume pset.count (rcvd self) ≥ N - T
+  assume card (rcvd self) ≥ N - T
   pc self := AC
-  sent := pset.insert self sent
+  sent := insert self sent
 }
 
 -- UponAcceptSentBefore(self) ==
@@ -174,7 +173,7 @@ action Step_UponAcceptorSentBefore (self : process) {
   require isCorrect self
   require pc self = SE
   ReceiveFromAnySender self
-  assume pset.count (rcvd self) ≥ N - T
+  assume card (rcvd self) ≥ N - T
   pc self := AC
 }
 
@@ -195,9 +194,9 @@ action Step_UponAcceptorSentBefore (self : process) {
 --   return pset.remove M Faulty
 -- }
 
-invariant [Corr_cup_faulty_eq_proc] pset.union Corr Faulty == (pset.ofList processEnumerable.allValues)
-invariant [card_corr] pset.count Corr ≥ N - T
-invariant [card_faulty] pset.count Faulty ≤ T
+invariant [Corr_cup_faulty_eq_proc] Corr ∪ Faulty == (TSet.univ process : procSet)
+invariant [card_corr] card Corr ≥ N - T
+invariant [card_faulty] card Faulty ≤ T
 
 #gen_spec
 

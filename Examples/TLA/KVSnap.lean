@@ -29,8 +29,7 @@ veil module KVsnapNew
 --             NoVal           \* NoVal, which all keys are initialized with.
 type key
 type txId
-type keySet
-instantiate kset : TSet key keySet
+set_type keySet : key
 -- `ClientCentric` quantifies over all keys (states) and `Range(ops)` over all TxIds
 instantiate keyEnum : Veil.Enumeration key
 instantiate txEnum : Veil.Enumeration txId
@@ -190,10 +189,10 @@ function ops : txId → List (Operation key (Option txId))
 after_init {
   store K := none
   tx T := false
-  missed T := kset.empty
+  missed T := ∅
   snapshotStore T K := none
-  read_keys T := kset.empty
-  write_keys T := kset.empty
+  read_keys T := ∅
+  write_keys T := ∅
   ops T := []
   pc T := START
 }
@@ -212,8 +211,8 @@ action Start (self : txId) {
   require pc self = START
   tx self := true
   snapshotStore self K := store K
-  let rk :| ¬ kset.isEmpty rk
-  let wk :| ¬ kset.isEmpty wk
+  let rk ⊆ (TSet.univ key : keySet) :| TSet.Nonempty rk
+  let wk ⊆ (TSet.univ key : keySet) :| TSet.Nonempty wk
   read_keys self := rk
   write_keys self := wk
   pc self := READ
@@ -226,7 +225,7 @@ action Start (self : txId) {
 action Read (self : txId) {
   require pc self = READ
   ops self := ops self ++
-    (kset.toList (read_keys self)).map (fun k => ⟨.read, k, snapshotStore self k⟩)
+    (TSet.toList (read_keys self)).map (fun k => ⟨.read, k, snapshotStore self k⟩)
   pc self := UPDATE
 }
 
@@ -254,12 +253,12 @@ action Update (self : txId) {
 -- field that this action changes.
 action Commit (self : txId) {
   require pc self = COMMIT
-  if kset.isEmpty (kset.intersection (missed self) (write_keys self)) then
+  if TSet.Disjoint (missed self) (write_keys self) then
     tx self := false
-    missed O := if tx O then kset.union (missed O) (write_keys self) else missed O
+    missed O := if tx O then missed O ∪ write_keys self else missed O
     store K := if K ∈ write_keys self then snapshotStore self K else store K
     ops self := ops self ++
-      (kset.toList (write_keys self)).map (fun k => ⟨.write, k, some self⟩)
+      (TSet.toList (write_keys self)).map (fun k => ⟨.write, k, some self⟩)
   pc self := Done
 }
 

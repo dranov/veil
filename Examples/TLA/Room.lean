@@ -17,10 +17,8 @@ structure Key (Room : Type) where
   room : Room
   num : Nat
 
-type GuestSet
-type KeySet
-instantiate guestTset : TSet Guest GuestSet
-instantiate keyTset : TSet (Key Room) KeySet
+set_type GuestSet : Guest
+set_type KeySet : Key Room
 enum Position = { noroom,  room }
 enum Occupied = { nobody, body }
 
@@ -45,9 +43,9 @@ function inside (r : Room) : Occupied
 --         /\ inside = [r \in Room |-> "nobody"]
 after_init {
   assignedKey G := noroom
-  registered R := guestTset.empty
+  registered R := ∅
   roomKey R := { room := R, num := 0 }
-  guestKeys G := keyTset.empty
+  guestKeys G := ∅
   inside R := nobody
 }
 
@@ -58,10 +56,10 @@ after_init {
 --                 /\ guestKeys' = [guestKeys EXCEPT ![g] = guestKeys[g] \cup {roomKey[r]}]
 --                 /\ UNCHANGED <<assignedKey,roomKey,inside>>
 action CheckIn (g : Guest) (r : Room) {
-  require ∀gx, keyTset.count (guestKeys gx) <= 3
-  require guestTset.count (registered r) = 0
-  registered r := guestTset.insert g (registered r)
-  guestKeys g := keyTset.insert (roomKey r) (guestKeys g)
+  require ∀gx, card (guestKeys gx) <= 3
+  require card (registered r) = 0
+  registered r := insert g (registered r)
+  guestKeys g := insert (roomKey r) (guestKeys g)
 }
 
 
@@ -72,11 +70,11 @@ action CheckIn (g : Guest) (r : Room) {
 --                  /\ roomKey' = [roomKey EXCEPT ![r] = NextKey(r, roomKey[r])]
 --                  /\ UNCHANGED <<assignedKey,guestKeys,inside>>
 action CheckOut (g : Guest) (r : Room) {
-  require ∀gx, keyTset.count (guestKeys gx) <= 3
-  require guestTset.contains g (registered r)
+  require ∀gx, card (guestKeys gx) <= 3
+  require g ∈ registered r
   require assignedKey g = noroom
   require inside r = nobody
-  registered r := guestTset.remove g (registered r)
+  registered r := registered r \ {g}
   -- roomKey' = [roomKey EXCEPT ![r] = NextKey(r, roomKey[r])]
   -- NextKey(r, k) = <<r, k[2]+1>>
   let currentKey := roomKey r
@@ -92,10 +90,10 @@ action CheckOut (g : Guest) (r : Room) {
 --                   /\ inside' = [inside EXCEPT ![r] = "body"]
 --                   /\ UNCHANGED <<registered,roomKey,guestKeys>>
 action EnterRoom (g : Guest) (r : Room) {
-  require ∀gx, keyTset.count (guestKeys gx) <= 3
+  require ∀gx, card (guestKeys gx) <= 3
   require assignedKey g = noroom
   require inside r = nobody
-  require keyTset.count (guestKeys g) > 0
+  require card (guestKeys g) > 0
   -- roomKey[r] = RandomElement(guestKeys[g])
   require roomKey r ∈ (guestKeys g)
   assignedKey g := room
@@ -109,7 +107,7 @@ action EnterRoom (g : Guest) (r : Room) {
 --                   /\ inside' = [inside EXCEPT ![r] = "nobody"]
 --                   /\ UNCHANGED <<registered,roomKey,guestKeys>>
 action LeaveRoom (g : Guest) (r : Room) {
-  require ∀gx, keyTset.count (guestKeys gx) <= 3
+  require ∀gx, card (guestKeys gx) <= 3
   require assignedKey g = room
   require inside r = body
   require (roomKey r) ∈ (guestKeys g)
@@ -120,7 +118,7 @@ action LeaveRoom (g : Guest) (r : Room) {
 -- -- NoBadEntry invariants
 -- -- 1. \A r \in Room : Cardinality(registered[r]) <= 1
 safety [registered_at_most_one]
-  ∀ r g1 g2, guestTset.contains g1 (registered r) ∧ guestTset.contains g2 (registered r) → g1 = g2
+  ∀ r, card (registered r) ≤ 1
 
 -- -- 2. assignedKey[g] = "room" => \E r \in Room :
 -- --        /\ roomKey[r] \in guestKeys[g]
@@ -128,9 +126,9 @@ safety [registered_at_most_one]
 -- --        /\ g \in registered[r]
 safety [guest_in_room_valid]
   ∀ g, assignedKey g = room →
-    ∃ r, keyTset.contains (roomKey r) (guestKeys g) ∧
+    ∃ r, roomKey r ∈ guestKeys g ∧
          inside r = body ∧
-         guestTset.contains g (registered r)
+         g ∈ registered r
 
 -- -- 3. inside[r] = "body" => \E g \in Guest :
 -- --        /\ roomKey[r] \in guestKeys[g]
@@ -138,9 +136,9 @@ safety [guest_in_room_valid]
 -- --        /\ g \in registered[r]
 safety [room_occupied_valid]
   ∀ r, inside r = body →
-    ∃ g, keyTset.contains (roomKey r) (guestKeys g) ∧
+    ∃ g, roomKey r ∈ guestKeys g ∧
          assignedKey g = room ∧
-         guestTset.contains g (registered r)
+         g ∈ registered r
 
 invariant [key_num] ∀ R, (roomKey R).num < 10
 #gen_spec
@@ -151,9 +149,7 @@ invariant [key_num] ∀ R, (roomKey R).num < 10
   Room := Room_IndT,
   Guest := Guest_IndT,
   Position := Position_IndT,
-  Occupied := Occupied_IndT,
-  GuestSet := Std.ExtTreeSet Guest_IndT,
-  KeySet := Std.ExtTreeSet (Key Room_IndT)
+  Occupied := Occupied_IndT
 }
 { }
   (maxDepth := 2) (sequential := true)
