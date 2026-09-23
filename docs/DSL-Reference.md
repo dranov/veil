@@ -194,6 +194,13 @@ filtered list directly. `∀ S ⊆ available, P S` and `∃ S ⊆ available, P S
 quantify over that finite powerset. Its size is exponential in the pool size.
 Conditional choice uses `if S :| S ⊆ available ∧ P S then … else …`.
 
+Use `⋃ c ∈ Clients, allocated c` for an indexed union and `TSet.flatten family`
+to union a set of sets. Both return `∅` for an empty family. Indexed intersections
+specify their ambient set: `⋂ c ∈ Clients within U, allocated c` includes exactly
+the members of `U` present in every indexed set, and returns `U` when `Clients` is
+empty. The index collection and result collection may use different carriers;
+none of these operations requires an enumeration of their entire element types.
+
 State components define the **signature** of your transition system.
 
 #### Individuals

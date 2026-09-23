@@ -20,6 +20,8 @@ public import Veil.Frontend.Collections.Choice
 public meta import Veil.Frontend.Collections.Choice
 public import Veil.Frontend.Collections.Subsets
 public meta import Veil.Frontend.Collections.Subsets
+public import Veil.Frontend.Collections.Indexed
+public meta import Veil.Frontend.Collections.Indexed
 -- Generated checks and counterexamples evaluate the standard instances,
 -- including enumeration, orders, and JSON serializers, during elaboration.
 public meta import Veil.Frontend.Std
