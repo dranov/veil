@@ -142,6 +142,12 @@ satisfy these laws; custom carriers can implement `LawfulTSet` alongside `TSet`.
 The laws support ordinary Lean proofs with `simp` and `TSet.ext`; higher-order
 collection operations may require a Lean proof rather than automatic SMT discharge.
 
+Use `card S` for set cardinality, `TSet.countWhere S (fun x => P x)` to count
+matching members, and `TSet.countDistinct messages (fun m => m.sender)` to count
+distinct images without introducing another set carrier. These operate on the
+collection itself. `countFinite node P` counts a predicate over an explicitly
+enumerable whole type and removes any duplicates in its enumeration first.
+
 State components define the **signature** of your transition system.
 
 #### Individuals

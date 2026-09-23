@@ -8,6 +8,8 @@ public import Veil.Frontend.Std
 public import Veil.Frontend.SetType
 public import Veil.Frontend.Collections.Basic
 public meta import Veil.Frontend.Collections.Basic
+public import Veil.Frontend.Collections.Cardinality
+public meta import Veil.Frontend.Collections.Cardinality
 -- Generated checks and counterexamples evaluate the standard instances,
 -- including enumeration, orders, and JSON serializers, during elaboration.
 public meta import Veil.Frontend.Std
