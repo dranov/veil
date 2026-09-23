@@ -172,6 +172,13 @@ is the usual membership implication/conjunction, so existing Lean proofs apply.
 A bound depending on its own quantified variable retains Lean's ordinary semantics
 and is not a single finite collection to traverse.
 
+A collection bound is preserved when a nondeterministic choice adds predicates:
+`let m :| m ∈ messages ∧ P m` and `if m :| m ∈ messages ∧ P m then … else …`
+enumerate members of `messages`, then filter them. This also works with
+`TSet.contains m messages` and nested conjunctions. Put the bounded predicate
+first. No enumeration of the whole message type is required, and every qualifying
+member remains a possible choice. The `if` form takes its else branch if none qualify.
+
 State components define the **signature** of your transition system.
 
 #### Individuals
