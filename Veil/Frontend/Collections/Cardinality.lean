@@ -42,4 +42,18 @@ theorem card_eq_zero_iff [LawfulTSet α κ] (s : κ) :
   simp only [List.eq_nil_iff_forall_not_mem, ← TSet.toList_contains_iff]
   rfl
 
+/-- Cardinality of list construction when its input has no duplicates. -/
+theorem card_ofList_of_nodup [LawfulTSet α κ]
+    (xs : List α) (h : xs.Nodup) : Veil.card (TSet.ofList xs : κ) = xs.length := by
+  induction xs with
+  | nil =>
+    have heq : (TSet.ofList ([] : List α) : κ) = ∅ := by
+      apply TSet.ext; intro x; simp [LawfulTSet.mem_ofList]
+    rw [heq]; exact TSet.card_empty
+  | cons x xs ih =>
+    have heq : (TSet.ofList (x :: xs) : κ) = insert x (TSet.ofList xs : κ) := by
+      apply TSet.ext; intro y; simp [LawfulTSet.mem_ofList]
+    rw [heq, TSet.card_insert]
+    simp [LawfulTSet.mem_ofList, List.nodup_cons.mp h, ih (List.nodup_cons.mp h).2]
+
 end TSet

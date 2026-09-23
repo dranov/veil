@@ -114,6 +114,8 @@ See `Std.lean` for the complete list of type classes.
 
 ### 4. State and Theory Components
 
+#### Finite sets
+
 Finite-set carriers can be declared with `set_type`:
 
 ```lean
@@ -200,6 +202,38 @@ specify their ambient set: `⋂ c ∈ Clients within U, allocated c` includes ex
 the members of `U` present in every indexed set, and returns `U` when `Clients` is
 empty. The index collection and result collection may use different carriers;
 none of these operations requires an enumeration of their entire element types.
+
+Declare `finite_type node` when the entire node type is intended to be finite.
+It adds `node_enum : Enumeration node` to an ordinary `type node` declaration;
+model checking supplies that instance from the chosen concrete type. Use
+`(TSet.univ node : Nodes)` for the whole universe and `typeCard node` for the
+cardinality of the type. Universes deduplicate their enumeration through the set
+carrier. Ordinary `type` declarations remain potentially infinite; explicit
+subdomain sets and ordered lists remain separate from a whole-type universe.
+
+Inclusive natural-number intervals use `({lo ..= hi} : Numbers)` (or
+`TSet.interval lo hi`). For integers, including negative endpoints, use
+`TSet.intInterval lo hi`. Descending intervals are empty; equal endpoints give a
+singleton. The interval membership laws characterize both endpoints inclusively,
+and `TSet.card_interval` gives natural-interval cardinality as `hi + 1 - lo`.
+
+For example, the allocation action can combine these operations directly:
+
+```lean
+finite_type client
+finite_type resource
+set_type Clients : client
+set_type Resources : resource
+function allocated : client → Resources
+
+after_init { allocated C := ∅ }
+action allocate (c : client) {
+  let used := ⋃ who ∈ (TSet.univ client : Clients), allocated who
+  let available := (TSet.univ resource : Resources) \ used
+  let grant ⊆ available :| card grant > 0
+  allocated c := allocated c ∪ grant
+}
+```
 
 State components define the **signature** of your transition system.
 
