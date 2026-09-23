@@ -179,6 +179,21 @@ enumerate members of `messages`, then filter them. This also works with
 first. No enumeration of the whole message type is required, and every qualifying
 member remains a possible choice. The `if` form takes its else branch if none qualify.
 
+Subset choice can bind a set directly:
+
+```lean
+let S ⊆ available
+let S ⊆ (available ∩ requested) :| TSet.Nonempty S
+let S ⊆ available :| card S = k
+```
+
+These expand to existing nondeterministic choice with a subset bound first.
+Candidates come from `TSet.subsets available`, including the empty set; additional
+predicates filter those candidates. `TSet.subsetsOfSize available k` exposes the
+filtered list directly. `∀ S ⊆ available, P S` and `∃ S ⊆ available, P S` likewise
+quantify over that finite powerset. Its size is exponential in the pool size.
+Conditional choice uses `if S :| S ⊆ available ∧ P S then … else …`.
+
 State components define the **signature** of your transition system.
 
 #### Individuals
