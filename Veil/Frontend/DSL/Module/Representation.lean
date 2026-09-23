@@ -218,6 +218,8 @@ structure Parameter where
   name : Name
   type : Term
   default : Option ParameterDefault := .none
+  /-- Element type for a `set_type` sort; selects its default model carrier. -/
+  setElementType : Option Term := none
   /-- The user-written syntax that resulted in the declaration of this
   parameter. Note that multiple parameters might be due to the same
   user-provided syntax. -/

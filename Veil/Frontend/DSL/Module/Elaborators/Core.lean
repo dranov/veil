@@ -98,6 +98,23 @@ def elabTypeDeclaration : CommandElab := fun stx => do
       localEnv.modifyModule (fun _ => mod)
   | _ => throwUnsupportedSyntax
 
+@[command_elab Veil.setTypeDeclaration]
+def elabSetTypeDeclaration : CommandElab := fun stx => do
+  let mod ← getCurrentModule (errMsg := "You cannot declare a set type outside of a Veil module!")
+  mod.throwIfStateAlreadyDefined
+  let `(set_type $id:ident : $elem:term) := stx | throwUnsupportedSyntax
+  let mod ← mod.declareUninterpretedSort id.getId stx
+  let instName := id.getId.appendAfter "_set"
+  mod.throwIfAlreadyDeclared instName
+  let inst : Parameter := {
+    kind := .moduleTypeclass .userDefined, name := instName
+    «type» := ← `(TSet $elem $id), userSyntax := stx }
+  let parameters := mod.parameters.map fun p =>
+    if p.name == id.getId then { p with setElementType := some elem } else p
+  localEnv.modifyModule fun _ => { mod with
+    parameters := parameters.push inst
+    _declarations := mod._declarations.insert instName .moduleParameter }
+
 @[command_elab Veil.parameterDeclaration]
 def elabParameterDeclaration : CommandElab := fun stx => do
   let mod ← getCurrentModule (errMsg := "You cannot declare a parameter outside of a Veil module!")

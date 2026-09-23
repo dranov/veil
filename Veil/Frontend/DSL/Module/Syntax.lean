@@ -100,6 +100,9 @@ type node
 -/
 scoped syntax (name := typeDeclaration) kw_type ident : command
 
+/-- Declare an abstract finite-set carrier with a default concrete representation. -/
+scoped syntax (name := setTypeDeclaration) "set_type" ident " : " term : command
+
 /--Declare an enum type.
 
 Example:

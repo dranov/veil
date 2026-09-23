@@ -114,6 +114,21 @@ See `Std.lean` for the complete list of type classes.
 
 ### 4. State and Theory Components
 
+Finite-set carriers can be declared with `set_type`:
+
+```lean
+type node
+set_type Nodes : node
+individual seen : Nodes
+```
+
+This introduces an abstract type `Nodes` and the instance `Nodes_set : TSet node Nodes`.
+Specifications remain independent of the concrete set representation. Model checking
+defaults `Nodes` to `Std.ExtTreeSet` of the instantiated node type, so
+`#model_check interpreted { node := Fin 3 } {}` suffices. Override the carrier with
+`{ node := Fin 3, Nodes := OrdList (Fin 3) }` when desired. Nested declarations
+such as `set_type Families : Nodes` receive corresponding nested defaults.
+
 State components define the **signature** of your transition system.
 
 #### Individuals

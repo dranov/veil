@@ -5,6 +5,7 @@ public import Veil.Core.Tools.ModelChecker.Concrete.Checker
 public import Veil.Core.Tools.ModelChecker.Simulation
 public import Veil.Frontend.DSL.Action.Extract
 public import Veil.Frontend.Std
+public import Veil.Frontend.SetType
 -- Generated checks and counterexamples evaluate the standard instances,
 -- including enumeration, orders, and JSON serializers, during elaboration.
 public meta import Veil.Frontend.Std
