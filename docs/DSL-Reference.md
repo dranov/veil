@@ -165,6 +165,13 @@ exists, and fall back to `Std.ExtTreeSet` for concretely ordered output types.
 Ambiguous carriers require an annotation. Products use the same result-carrier
 inference for their pair type.
 
+Bounded quantifiers `∀ x ∈ S, P x` and `∃ x ∈ S, P x` decide their predicates
+by traversing `S`, without requiring `Enumeration` of its element type. They
+support empty sets, nested bounds, and ordinary Lean lists. Their logical meaning
+is the usual membership implication/conjunction, so existing Lean proofs apply.
+A bound depending on its own quantified variable retains Lean's ordinary semantics
+and is not a single finite collection to traverse.
+
 State components define the **signature** of your transition system.
 
 #### Individuals

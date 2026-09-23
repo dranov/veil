@@ -14,6 +14,8 @@ public import Veil.Frontend.Collections.Comprehension
 public meta import Veil.Frontend.Collections.Comprehension
 public import Veil.Frontend.Collections.Image
 public meta import Veil.Frontend.Collections.Image
+public import Veil.Frontend.Collections.Quantifiers
+public meta import Veil.Frontend.Collections.Quantifiers
 -- Generated checks and counterexamples evaluate the standard instances,
 -- including enumeration, orders, and JSON serializers, during elaboration.
 public meta import Veil.Frontend.Std
