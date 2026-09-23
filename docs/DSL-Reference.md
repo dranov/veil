@@ -148,6 +148,13 @@ distinct images without introducing another set carrier. These operate on the
 collection itself. `countFinite node P` counts a predicate over an explicitly
 enumerable whole type and removes any duplicates in its enumeration first.
 
+Exact comprehensions use `{x ∈ S | P x}` to filter an existing set and
+`({x : node | P x} : Nodes)` to construct a set from an explicitly enumerable
+type. The bounded form preserves the source carrier and does not require an
+enumeration of the element type. Both forms include every matching member and
+exclude every nonmatching one. Whole-type comprehensions require
+`Enumeration node`; ordinary `type node` declarations do not assume finiteness.
+
 State components define the **signature** of your transition system.
 
 #### Individuals
