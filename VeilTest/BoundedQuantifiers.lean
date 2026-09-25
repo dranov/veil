@@ -22,6 +22,23 @@ example [TSet α κ] (s : κ) (p : α → Prop) :
 example : (∀ x ∈ ({x} : OrdList Nat), x = x) ↔
     (∀ x : Nat, x ∈ ({x} : OrdList Nat) → x = x) := Iff.rfl
 
+-- The first introduced binder is the element, not a generated let binding.
+example (s : OrdList Nat) : ∀ x ∈ s, x = x := by
+  intro x hx
+  rfl
+
+def Nat.boundedSuccessors (n : Nat) : OrdList Nat := {n, n + 1}
+
+-- Dotted occurrences also refer to the quantified variable.
+example : (∀ x ∈ x.boundedSuccessors, x = (x : Nat)) ↔
+    (∀ x : Nat, x ∈ x.boundedSuccessors → x = x) := Iff.rfl
+example : (∃ x ∈ x.boundedSuccessors, x = (x : Nat)) ↔
+    (∃ x : Nat, x ∈ x.boundedSuccessors ∧ x = x) := Iff.rfl
+
+example : ∀ x ∈ (let x : OrdList Nat := {1}; x), x = x := by
+  intro x hx
+  rfl
+
 veil module BoundedQuantifiers
 
 type item

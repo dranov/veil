@@ -1,6 +1,7 @@
 module
 public import Veil.Frontend.Collections.Basic
 public meta import Veil.Frontend.Collections.Basic
+public meta import Veil.Frontend.Collections.Binders
 @[expose] public section
 open Veil
 
@@ -19,19 +20,20 @@ instance (priority := high) decidableBEx [TSet α κ] (s : κ)
 
 end TSet
 
-namespace Veil
--- Elaborate independent bounds before introducing the quantified variable.
--- This prevents stuck synthetic instances for literals inside nested binders.
--- If a bound mentions the binder, preserve Lean's ordinary binding semantics.
-scoped macro (priority := high) "∀ " x:ident " ∈ " s:term ", " p:term : term => do
-  if (s.raw.find? (fun t => t.isIdent && t.getId == x.getId)).isSome then
-    `(∀ $x, $x ∈ $s → $p)
-  else
-    `(let bound := $s; ∀ $x, $x ∈ bound → $p)
-scoped macro (priority := high) "∃ " x:ident " ∈ " s:term ", " p:term : term => do
-  if (s.raw.find? (fun t => t.isIdent && t.getId == x.getId)).isSome then
-    `(Exists (fun $x => $x ∈ $s ∧ $p))
-  else
-    `(let bound := $s; Exists (fun $x => $x ∈ bound ∧ $p))
-end Veil
+end
 
+public meta section
+open Lean Elab Term
+namespace Veil
+
+scoped syntax (name := boundedForall) (priority := high) "∀ " ident " ∈ " term ", " term : term
+scoped syntax (name := boundedExists) (priority := high) "∃ " ident " ∈ " term ", " term : term
+
+@[term_elab boundedForall] def elabBoundedForall : TermElab := fun stx expected? => do
+  let `(∀ $x:ident ∈ $s:term, $p:term) := stx | throwUnsupportedSyntax
+  elabBoundedQuantifier x s (fun s => `(∀ $x, $x ∈ $s → $p)) expected?
+
+@[term_elab boundedExists] def elabBoundedExists : TermElab := fun stx expected? => do
+  let `(∃ $x:ident ∈ $s:term, $p:term) := stx | throwUnsupportedSyntax
+  elabBoundedQuantifier x s (fun s => `(Exists (fun $x => $x ∈ $s ∧ $p))) expected?
+end Veil

@@ -17,6 +17,12 @@ open Veil
 
 example [TSet α κ] : (∀ s ⊆ (s : κ), True) ↔ (∀ s : κ, s ⊆ s → True) := Iff.rfl
 
+example [TSet α κ] (pool : κ) : ∀ s ⊆ pool, s ⊆ pool := by
+  intro s hs
+  exact hs
+
+#guard decide (∀ s ⊆ ({1, 2} : OrdList Nat), ∃ t ⊆ s, t = s)
+
 veil module SubsetChoice
 
 type item

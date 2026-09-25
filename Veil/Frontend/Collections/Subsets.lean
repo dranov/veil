@@ -2,6 +2,7 @@ module
 public import Veil.Frontend.Collections.Cardinality
 public import Veil.Frontend.Collections.Choice
 public meta import Veil.Frontend.Collections.Cardinality
+public meta import Veil.Frontend.Collections.Binders
 public meta import Veil.Frontend.DSL.Action.Syntax
 @[expose] public section
 open Veil
@@ -29,17 +30,23 @@ instance (priority := high) decidableSubsetAll [TSet α κ] (pool : κ)
 
 end TSet
 
+end
+
+public meta section
+open Lean Elab Term
 namespace Veil
-scoped macro (priority := high) "∃ " s:ident " ⊆ " pool:term ", " p:term : term => do
-  if (pool.raw.find? (fun t => t.isIdent && t.getId == s.getId)).isSome then
-    `(Exists (fun $s => $s ⊆ $pool ∧ $p))
-  else
-    `(let bound := $pool; Exists (fun $s => $s ⊆ bound ∧ $p))
-scoped macro (priority := high) "∀ " s:ident " ⊆ " pool:term ", " p:term : term => do
-  if (pool.raw.find? (fun t => t.isIdent && t.getId == s.getId)).isSome then
-    `(∀ $s, $s ⊆ $pool → $p)
-  else
-    `(let bound := $pool; ∀ $s, $s ⊆ bound → $p)
+
+scoped syntax (name := subsetForall) (priority := high) "∀ " ident " ⊆ " term ", " term : term
+scoped syntax (name := subsetExists) (priority := high) "∃ " ident " ⊆ " term ", " term : term
+
+@[term_elab subsetForall] def elabSubsetForall : TermElab := fun stx expected? => do
+  let `(∀ $s:ident ⊆ $pool:term, $p:term) := stx | throwUnsupportedSyntax
+  elabBoundedQuantifier s pool (fun pool => `(∀ $s, $s ⊆ $pool → $p)) expected?
+
+@[term_elab subsetExists] def elabSubsetExists : TermElab := fun stx expected? => do
+  let `(∃ $s:ident ⊆ $pool:term, $p:term) := stx | throwUnsupportedSyntax
+  elabBoundedQuantifier s pool (fun pool => `(Exists (fun $s => $s ⊆ $pool ∧ $p))) expected?
+
 scoped syntax (name := letSubset) (priority := high)
   "let " ident " ⊆ " term (" :| " term)? : doElem
 macro_rules
@@ -48,4 +55,3 @@ macro_rules
     | none => `(doElem| let $s:ident :| $s ⊆ $pool)
     | some p => `(doElem| let $s:ident :| $s ⊆ $pool ∧ $p)
 end Veil
-
