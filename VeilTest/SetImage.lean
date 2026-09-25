@@ -22,6 +22,36 @@ example [TSet α κ] [TSet β ν] [TSet β μ] (s : κ) (f : α → β) : True :
   have : ν := selected
   trivial
 
+-- Polymorphic bodies can obtain their result type from a unique carrier.
+example [TSet (List Nat) ν] : True := by
+  let image := {[] | _x ∈ ({1} : OrdList Nat)}
+  have : ν := image
+  trivial
+
+-- Candidate probing must not commit the first matching element type.
+example [TSet (List Nat) ν] [TSet (List Bool) μ] : True := by
+  fail_if_success let ambiguous := {[] | _x ∈ ({1} : OrdList Nat)}
+  let selected : μ := {[] | _x ∈ ({1} : OrdList Nat)}
+  have : μ := selected
+  trivial
+
+example [TSet (List Bool) μ] [TSet (List Nat) ν] : True := by
+  fail_if_success let ambiguous := {[] | _x ∈ ({1} : OrdList Nat)}
+  trivial
+
+-- Products associate like their element type, α × β × γ.
+example [TSet α κ] [TSet β ν] [TSet γ μ]
+    [TSet (β × γ) bc] [TSet (α × β × γ) abc]
+    (a : κ) (b : ν) (c : μ) : True := by
+  let product := a ×ˢ b ×ˢ c
+  have : abc := product
+  trivial
+
+/-- error: cannot infer the result set carrier; add a type annotation or declare a set_type for the result elements -/
+#guard_msgs in
+def missingImageCarrier {β : Type} (f : Nat → β) :=
+  {f x | x ∈ ({1} : OrdList Nat)}
+
 example [TSet α κ] [TSet β ν] [LawfulTSet β ν] (s : κ) (f : α → β) (y : β) :
     y ∈ ({f x | x ∈ s} : ν) ↔ ∃ x ∈ s, f x = y := by simp
 
