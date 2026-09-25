@@ -144,11 +144,15 @@ satisfy these laws; custom carriers can implement `LawfulTSet` alongside `TSet`.
 The laws support ordinary Lean proofs with `simp` and `TSet.ext`; higher-order
 collection operations may require a Lean proof rather than automatic SMT discharge.
 
-Use `card S` for set cardinality, `TSet.countWhere S (fun x => P x)` to count
-matching members, and `TSet.countDistinct messages (fun m => m.sender)` to count
-distinct images without introducing another set carrier. These operate on the
-collection itself. `countFinite node P` counts a predicate over an explicitly
-enumerable whole type and removes any duplicates in its enumeration first.
+Use `card S` for set cardinality and `card {x ∈ S | P x}` to count matching
+members. Express emptiness as `S = ∅` and absence of a matching member as
+`¬ ∃ x ∈ S, P x`.
+
+`TSet.countWhere S P` is equivalent to the filtered cardinality above.
+`TSet.countDistinct messages (fun m => m.sender)` counts distinct images without
+introducing another set carrier. These operate on the collection itself.
+`countFinite node P` counts a predicate over an explicitly enumerable whole
+type and removes any duplicates in its enumeration first.
 
 Exact comprehensions use `{x ∈ S | P x}` to filter an existing set and
 `({x : node | P x} : Nodes)` to construct a set from an explicitly enumerable
@@ -157,8 +161,8 @@ enumeration of the element type. Both forms include every matching member and
 exclude every nonmatching one. Whole-type comprehensions require
 `Enumeration node`; ordinary `type node` declarations do not assume finiteness.
 
-Set images use `{f x | x ∈ S}`; Cartesian products use `S ×ˢ T`. Record
-families are images too, for example
+Set images use `{f x | x ∈ S}`; Cartesian products use `S ×ˢ T` and associate
+to the right, matching Lean's pair types. Record families are images too, for example
 `({{ sender := me, receiver := n } | n ∈ nodes} : Messages)`. These operations
 traverse their inputs and remove duplicates in the result. An expected result
 carrier takes precedence. Otherwise, images preserve the source carrier when the

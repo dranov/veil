@@ -8,7 +8,8 @@ translation. The collection examples use the DSL's finite-set vocabulary:
 | `set_type`, inferred model carriers, literals, membership, union and difference | SimpleAllocator, Room, KVSnap, KVSnapRe, Paxos, MultiPaxos, EPaxos, NOPaxos, Raft, BcastByz |
 | Nonempty and fixed-cardinality subset choices | SimpleAllocator, KVSnap, KVSnapRe, BcastByz |
 | `finite_type` and `TSet.univ` | BcastByz, MultiPaxos |
-| `card`, predicate counts and distinct-sender counts | Room, BcastByz, Paxos, MultiPaxos, EPaxos, NOPaxos, Raft |
+| `card` and distinct-sender counts | Room, BcastByz, EPaxos, NOPaxos, Raft |
+| Direct emptiness and bounded absence checks | SimpleAllocator, Room, Paxos, MultiPaxos |
 | Comprehensions, record images and collection-bounded quantifiers | KVSnap, KVSnapRe, Paxos, MultiPaxos, EPaxos, NOPaxos |
 | Indexed unions | SimpleAllocator, MultiPaxos, EPaxos |
 | Inclusive intervals | NOPaxos |

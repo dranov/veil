@@ -35,8 +35,8 @@ after_init {
 action Request (c : client) {
   -- S \in SUBSET Resources /\ S # {}
   let S ⊆ (TSet.univ resource : ResourceSet) :| TSet.Nonempty S
-  require card (unsatisfy c) == 0
-  require card (alloc c) == 0
+  require unsatisfy c = ∅
+  require alloc c = ∅
   unsatisfy c := S
 }
 

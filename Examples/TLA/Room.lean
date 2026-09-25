@@ -57,7 +57,7 @@ after_init {
 --                 /\ UNCHANGED <<assignedKey,roomKey,inside>>
 action CheckIn (g : Guest) (r : Room) {
   require ∀gx, card (guestKeys gx) <= 3
-  require card (registered r) = 0
+  require registered r = ∅
   registered r := insert g (registered r)
   guestKeys g := insert (roomKey r) (guestKeys g)
 }
