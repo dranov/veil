@@ -28,10 +28,12 @@ def comprehension (α : Type u) [Enumeration α] [TSet α κ]
 end TSet
 
 namespace Veil
-scoped syntax (name := boundedSetComprehension) "{" ident " ∈ " term " | " term "}" : term
+-- Prefer filtering when both sides of `|` contain membership. Otherwise a
+-- predicate such as `m.sender ∈ senders` can be parsed as an image binder.
+scoped syntax (name := boundedSetComprehension) (priority := high)
+  "{" ident " ∈ " term " | " term "}" : term
 scoped syntax (name := finiteSetComprehension) "{" ident " : " term " | " term "}" : term
 macro_rules
   | `({$x:ident ∈ $s:term | $p:term}) => `(TSet.filterWhere $s (fun $x => $p))
   | `({$x:ident : $t:term | $p:term}) => `(TSet.comprehension $t (fun $x => $p))
 end Veil
-

@@ -9,6 +9,17 @@ open Veil
 #guard ({x : Bool | x = true} : OrdArray Bool) = {true}
 #guard ({_x : Bool | False} : Std.ExtTreeSet Bool) = ∅
 
+structure ComprehensionMessage where
+  sender : Nat
+
+-- No result annotation or defensive parentheses are needed to distinguish
+-- a filter with a membership predicate from an image comprehension.
+example [TSet ComprehensionMessage κ] [TSet Nat ν] (messages : κ) (senders : ν) : True := by
+  let filtered := {m ∈ messages | m.sender ∈ senders}
+  have : κ := filtered
+  have : filtered = TSet.filterWhere messages (fun m => m.sender ∈ senders) := rfl
+  trivial
+
 example [TSet α κ] [LawfulTSet α κ] (s : κ) (p : α → Prop)
     [DecidablePred p] (x : α) :
     x ∈ {y ∈ s | p y} ↔ x ∈ s ∧ p x := by simp
