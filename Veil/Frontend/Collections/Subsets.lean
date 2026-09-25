@@ -3,7 +3,6 @@ public import Veil.Frontend.Collections.Cardinality
 public import Veil.Frontend.Collections.Choice
 public meta import Veil.Frontend.Collections.Cardinality
 public meta import Veil.Frontend.Collections.Binders
-public meta import Veil.Frontend.DSL.Action.Syntax
 @[expose] public section
 open Veil
 
@@ -47,11 +46,4 @@ scoped syntax (name := subsetExists) (priority := high) "∃ " ident " ⊆ " ter
   let `(∃ $s:ident ⊆ $pool:term, $p:term) := stx | throwUnsupportedSyntax
   elabBoundedQuantifier s pool (fun pool => `(Exists (fun $s => $s ⊆ $pool ∧ $p))) expected?
 
-scoped syntax (name := letSubset) (priority := high)
-  "let " ident " ⊆ " term (" :| " term)? : doElem
-macro_rules
-  | `(doElem| let $s:ident ⊆ $pool:term $[:| $p:term]?) => do
-    match p with
-    | none => `(doElem| let $s:ident :| $s ⊆ $pool)
-    | some p => `(doElem| let $s:ident :| $s ⊆ $pool ∧ $p)
 end Veil

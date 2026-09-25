@@ -121,6 +121,20 @@ def elabSetTypeDeclaration : CommandElab := fun stx => do
     parameters := (parameters.push inst).push laws
     _declarations := (mod._declarations.insert instName .moduleParameter).insert lawsName .moduleParameter }
 
+@[command_elab finiteTypeDeclaration] def elabFiniteType : CommandElab := fun stx => do
+  let mod ← getCurrentModule (errMsg := "You cannot declare a finite type outside of a Veil module!")
+  mod.throwIfStateAlreadyDefined
+  let `(finite_type $id:ident) := stx | throwUnsupportedSyntax
+  let mod ← mod.declareUninterpretedSort id.getId stx
+  let instName := id.getId.appendAfter "_enum"
+  mod.throwIfAlreadyDeclared instName
+  let inst : Parameter := {
+    kind := .moduleTypeclass .userDefined, name := instName
+    «type» := ← `(Veil.Enumeration $id), userSyntax := stx }
+  localEnv.modifyModule fun _ => { mod with
+    parameters := mod.parameters.push inst
+    _declarations := mod._declarations.insert instName .moduleParameter }
+
 @[command_elab Veil.parameterDeclaration]
 def elabParameterDeclaration : CommandElab := fun stx => do
   let mod ← getCurrentModule (errMsg := "You cannot declare a parameter outside of a Veil module!")

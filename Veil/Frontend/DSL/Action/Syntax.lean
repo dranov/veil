@@ -81,6 +81,15 @@ syntax (name := pickExpression) kw_pick (lineEq term) ? : term
 /-- Binds a variable to a value that satisfies a predicate. -/
 scoped syntax (name := letPick) "let" term (":" term)? ":|" term : doElem
 
+/-- Choose a subset of a finite pool, optionally constrained by a predicate. -/
+scoped syntax (name := letSubset) (priority := high)
+  "let " ident " ⊆ " term (" :| " term)? : doElem
+macro_rules
+  | `(doElem| let $s:ident ⊆ $pool:term $[:| $p:term]?) => do
+    match p with
+    | none => `(doElem| let $s:ident :| $s ⊆ $pool)
+    | some p => `(doElem| let $s:ident :| $s ⊆ $pool ∧ $p)
+
 /-- `require P` means that execution can only proceed if `P` holds. It
 is used to express pre-conditions.
 

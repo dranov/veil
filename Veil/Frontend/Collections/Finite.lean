@@ -2,7 +2,6 @@ module
 
 public import Veil.Frontend.Collections.Cardinality
 public meta import Veil.Frontend.Collections.Cardinality
-public meta import Veil.Frontend.DSL.Module.Util.StateTheory
 
 @[expose] public section
 open Veil
@@ -51,30 +50,6 @@ end TSet
 namespace Veil
 
 scoped macro "{" lo:term " ..= " hi:term "}" : term => `(TSet.interval $lo $hi)
-end Veil
-
-end
-
-public meta section
-open Lean Elab Command
-
-namespace Veil
-
-scoped syntax (name := finiteTypeDeclaration) "finite_type " ident : command
-
-@[command_elab finiteTypeDeclaration] def elabFiniteType : CommandElab := fun stx => do
-  let mod ← getCurrentModule (errMsg := "You cannot declare a finite type outside of a Veil module!")
-  mod.throwIfStateAlreadyDefined
-  let `(finite_type $id:ident) := stx | throwUnsupportedSyntax
-  let mod ← mod.declareUninterpretedSort id.getId stx
-  let instName := id.getId.appendAfter "_enum"
-  mod.throwIfAlreadyDeclared instName
-  let inst : Parameter := {
-    kind := .moduleTypeclass .userDefined, name := instName
-    «type» := ← `(Veil.Enumeration $id), userSyntax := stx }
-  localEnv.modifyModule fun _ => { mod with
-    parameters := mod.parameters.push inst
-    _declarations := mod._declarations.insert instName .moduleParameter }
 end Veil
 
 end
