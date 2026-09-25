@@ -45,6 +45,11 @@ action pairSubset {
   assert card s = 2
   chosen := s
 }
+action pairSubsetReordered {
+  let s :| card s = 2 ∧ s ⊆ pool
+  assert card s = 2
+  chosen := s
+}
 action impossibleSubset {
   if s :| s ⊆ pool ∧ card s > card pool then { assert False; chosen := s }
   else { chosen := ∅ }

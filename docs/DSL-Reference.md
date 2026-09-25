@@ -177,9 +177,10 @@ and is not a single finite collection to traverse.
 A collection bound is preserved when a nondeterministic choice adds predicates:
 `let m :| m ∈ messages ∧ P m` and `if m :| m ∈ messages ∧ P m then … else …`
 enumerate members of `messages`, then filter them. This also works with
-`TSet.contains m messages` and nested conjunctions. Put the bounded predicate
-first. No enumeration of the whole message type is required, and every qualifying
-member remains a possible choice. The `if` form takes its else branch if none qualify.
+`TSet.contains m messages` and nested conjunctions. The bound can appear anywhere
+among the conjuncts: `P m ∧ m ∈ messages` works too. No enumeration of the whole
+message type is required, and every qualifying member remains a possible choice.
+The `if` form takes its else branch if none qualify.
 
 Subset choice can bind a set directly:
 
