@@ -70,15 +70,10 @@ type slot
 
 param maxBallot : Nat
 
-type VotedSet
-type DecreeSet
-type MsgSet
-type AcceptorSet
-
-instantiate voteSet : TSet (MultiPaxosVoted maxBallot slot value) VotedSet
-instantiate decSet : TSet (Decree slot value) DecreeSet
-instantiate msgSet : TSet (MultiPaxosMsg proposer acceptor value maxBallot slot VotedSet DecreeSet) MsgSet
-instantiate acSet : TSet acceptor AcceptorSet
+set_type VotedSet : MultiPaxosVoted maxBallot slot value
+set_type DecreeSet : Decree slot value
+set_type MsgSet : MultiPaxosMsg proposer acceptor value maxBallot slot VotedSet DecreeSet
+set_type AcceptorSet : acceptor
 
 -- ASSUME QuorumAssumption
 instantiate mem : Membership acceptor quorum
@@ -97,12 +92,12 @@ assumption [quorum_intersection]
 
 -- Init == /\ sent = {}
 after_init {
-  sent := msgSet.empty
+  sent := ∅
 }
 
 -- Send(m) == sent' = sent \cup m
 procedure Send (m : MsgSet) {
-  sent := msgSet.union m sent
+  sent := sent ∪ m
 }
 
 -- (***************************************************************************)
@@ -114,12 +109,10 @@ procedure Send (m : MsgSet) {
 -- (* Quorum is needed.                                                       *)
 -- (***************************************************************************)
 
--- TODO need singleton
-
 -- Phase1a(p) == \E b \in Ballots: Send({[type |-> "1a", from |-> p, bal |-> b]})
 action Phase1a (p : proposer) {
   let b ← pick (BallotTy maxBallot)
-  Send (msgSet.ofList [(.phase1a p b)])
+  Send ({.phase1a p b})
 }
 
 -- (***************************************************************************)
@@ -133,10 +126,10 @@ action Phase1a (p : proposer) {
 -- (* most recently (i.e., highest ballot) voted on, if any.                  *)
 -- (***************************************************************************)
 
--- voteds(a) == {[bal |-> m.bal, slot |-> m.slot, val |-> m.val]:
+-- voteds(a) == {[bal |-> m.bal, slot |-> m.slot, val |-> m]:
 --               m \in {m \in sent: m.type = "2b" /\ m.from = a}}
 ghost function voteds (a : acceptor) : VotedSet :=
-  msgSet.filterMap sent fun m =>
+  TSet.filterMap sent fun m =>
     match m with
     | .phase2b src bal slot val => if src = a then some { bal := bal, slot := slot, val := val } else none
     | _ => none
@@ -144,14 +137,12 @@ ghost function voteds (a : acceptor) : VotedSet :=
 -- PartialBmax(T) ==
 --   {t \in T : \A t1 \in T : t1.slot = t.slot => t1.bal =< t.bal}
 ghost function PartialBmax (T : VotedSet) : VotedSet :=
-  voteSet.filter T fun t =>
-    decide <|
-      ∀ t1 : { t1 // t1 ∈ T }, t1.val.slot = t.slot → t1.val.bal ≤ t.bal
+  {t ∈ T | ∀ t1 ∈ T, t1.slot = t.slot → t1.bal ≤ t.bal}
 
 -- Ghost relation: all previous 1b/2b messages from acceptor a have ballot < b
 -- Encodes: \A m2 \in {m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.from = a}: b > m2.bal
 ghost relation allPrevBallotsLower (a : acceptor) (b : BallotTy maxBallot) :=
-  ∀ m : { m // m ∈ sent }, (match m.val with
+  ∀ m ∈ sent, (match m with
     | .phase1b src bal _ => decide $ src = a → bal < b
     | .phase2b src bal _ _ => decide $ src = a → bal < b
     | _ => true) = true
@@ -161,14 +152,14 @@ ghost relation allPrevBallotsLower (a : acceptor) (b : BallotTy maxBallot) :=
 --   /\ \A m2 \in {m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.from = a}: m.bal > m2.bal
 --   /\ Send({[type |-> "1b", from |-> a, bal |-> m.bal, voted |-> PartialBmax(voteds(a))]})
 action Phase1b (a : acceptor) {
-  let m : { m // m ∈ sent } :| (match m.val with
+  let m :| m ∈ sent ∧ (match m with
     | .phase1a _ _ => true
     | _ => false) = true
-  let b := m.val.ballot
+  let b := m.ballot
   require allPrevBallotsLower a b
   let votedSet := voteds a
   let partialBmaxSet := PartialBmax votedSet
-  Send (msgSet.ofList [(.phase1b a b partialBmaxSet)])
+  Send ({.phase1b a b partialBmaxSet})
 }
 
 -- (***************************************************************************)
@@ -187,14 +178,13 @@ action Phase1b (a : acceptor) {
 -- Bmax(T) ==
 --   {[slot |-> t.slot, val |-> t.val] : t \in PartialBmax(T)}
 ghost function Bmax (T : VotedSet) : DecreeSet :=
-  voteSet.map (PartialBmax T) fun t =>
-    { slot := t.slot, val := t.val : Decree slot value }
+  ({{ slot := t.slot, val := t.val } | t ∈ PartialBmax T} : DecreeSet)
 
 -- FreeSlots(T) ==
 --   {s \in Slots : ~ \E t \in T : t.slot = s}
 ghost function FreeSlots (T : VotedSet) : List slot :=
   slotEnumerable.allValues.filter fun s =>
-    decide <| ¬ ∃ t : { t // t ∈ T }, t.val.slot = s
+    decide <| ¬ ∃ t ∈ T, t.slot = s
 
 -- NewProposals(T) ==
 --   (CHOOSE D \in SUBSET [slot : FreeSlots(T), val : Values] \ {}:
@@ -205,33 +195,25 @@ ghost function NewProposals (T : VotedSet) : DecreeSet :=
   "_TLC will always choose the `lowest` value that matches the set_",
   Here simulate `CHOOSE` by picking only the FIRST free slot with default value. -/
   match freeSlotList with
-  | [] => decSet.empty
-  | s :: _ => decSet.ofList [{ slot := s, val := default }]
+  | [] => ∅
+  | s :: _ => {{ slot := s, val := default }}
 
 -- ProposeDecrees(T) ==
 --   Bmax(T) \cup NewProposals(T)
 ghost function ProposeDecrees (T : VotedSet) : DecreeSet :=
-  decSet.union (Bmax T) (NewProposals T)
-
--- TODO need iterated union
+  Bmax T ∪ NewProposals T
 
 -- VS(S, Q) == UNION {m.voted: m \in {m \in S: m.from \in Q}}
 ghost function VS (S : MsgSet) (Q : quorum) : VotedSet :=
-  -- NOTE: Here we implicitly require that S only contains `1b` messages,
-  -- due to some typing issue
-  let sub := msgSet.filter S fun m =>
-    match m with
-    | .phase1b src _ _ => decide (src ∈ Q)
-    | _ => false
-  msgSet.toList sub |>.foldl (init := voteSet.empty) fun acc m =>
-    match m with
-    | .phase1b _ _ voted => voteSet.union acc voted
-    | _ => acc
+  -- Pin the message type to infer every parameter of the constructor match.
+  ⋃ m ∈ S, (match (m : MultiPaxosMsg proposer acceptor value maxBallot slot VotedSet DecreeSet) with
+    | .phase1b src _ voted => if src ∈ Q then voted else ∅
+    | _ => ∅ : VotedSet)
 
 -- Ghost relation: quorum Q is covered by 1b messages in S
 -- Encodes: \A a \in Q: \E m \in S: m.from = a
 ghost relation quorumCovered (Q : quorum) (S : MsgSet) :=
-  ∀ a ∈ Q, ∃ m : { m // m ∈ S }, (match m.val with
+  ∀ a ∈ Q, ∃ m ∈ S, (match m with
     | .phase1b src .. => decide $ src = a
     | _ => false) = true
 
@@ -247,8 +229,8 @@ action Phase2a (p : proposer) {
   let b ← pick (BallotTy maxBallot)
 
   -- ~\E m \in sent: (m.type = "2a") /\ (m.bal = b)
-  require ¬ ∃ msg : { m // m ∈ sent },
-    (match msg.val with
+  require ¬ ∃ msg ∈ sent,
+    (match msg with
       | .phase2a _ bal _ => decide $ bal = b
       | _ => false) = true
 
@@ -267,7 +249,7 @@ action Phase2a (p : proposer) {
   require quorumCovered Q S
 
   let proposeDecreesSet := ProposeDecrees (VS S Q)
-  Send (msgSet.ofList [(.phase2a p b proposeDecreesSet)])
+  Send ({.phase2a p b proposeDecreesSet})
 }
 -/
 
@@ -276,25 +258,24 @@ action Phase2a (p : proposer) {
   let b ← pick (BallotTy maxBallot)
 
   -- ~\E m \in sent: (m.type = "2a") /\ (m.bal = b)
-  require ¬ ∃ msg : { m // m ∈ sent },
-    (match msg.val with
+  require ¬ ∃ msg ∈ sent,
+    (match msg with
       | .phase2a _ bal _ => decide $ bal = b
       | _ => false) = true
 
   let Q ← pick quorum
 
   -- S \in SUBSET {m \in sent: (m.type = "1b") /\ (m.bal = b)}
-  let filtered1b := msgSet.filter sent fun m =>
-    match m with
+  let filtered1b := {m ∈ sent | (match m with
     | .phase1b _ bal _ => decide $ bal = b
-    | _ => false
-  let S :| msgSet.isSubset S filtered1b
+    | _ => false) = true}
+  let S ⊆ filtered1b
 
   -- \A a \in Q: \E m \in S: m.from = a
   require quorumCovered Q S
 
   let proposeDecreesSet := ProposeDecrees (VS S Q)
-  Send (msgSet.insert (.phase2a p b proposeDecreesSet) msgSet.empty)
+  Send ({.phase2a p b proposeDecreesSet})
 }
 
 -- (***************************************************************************)
@@ -306,7 +287,7 @@ action Phase2a (p : proposer) {
 -- Ghost relation: all previous 1b/2b messages from acceptor a have ballot ≤ b
 -- Encodes: \A m2 \in {m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.from = a}: b >= m2.bal
 ghost relation allPrevBallotsLeq (a : acceptor) (b : BallotTy maxBallot) :=
-  ∀ m : { m // m ∈ sent }, (match m.val with
+  ∀ m ∈ sent, (match m with
     | .phase1b src bal _ => decide $ src = a → bal ≤ b
     | .phase2b src bal _ _ => decide $ src = a → bal ≤ b
     | _ => true) = true
@@ -316,23 +297,22 @@ ghost relation allPrevBallotsLeq (a : acceptor) (b : BallotTy maxBallot) :=
 --   /\ \A m2 \in {m2 \in sent: m2.type \in {"1b", "2b"} /\ m2.from = a}: m.bal >= m2.bal
 --   /\ Send({[type |-> "2b", from |-> a, bal |-> m.bal, slot |-> d.slot, val |-> d.val]: d \in m.decrees})
 action Phase2b (a : acceptor) {
-  let m : { m // m ∈ sent } :| (match m.val with
+  let m :| m ∈ sent ∧ (match m with
     | .phase2a .. => true
     | _ => false) = true
-  let b := m.val.ballot
+  let b := m.ballot
   require allPrevBallotsLeq a b
-  let decrees := match m.val with
+  let decrees := match m with
     | .phase2a _ _ d => d
     | _ => default  -- dead branch
-  let replyMsgSet := decSet.map decrees fun d =>
-    Msg.phase2b a b d.slot d.val
+  let replyMsgSet : MsgSet := {Msg.phase2b a b d.slot d.val | d ∈ decrees}
   Send replyMsgSet
 }
 
 -- VotedForIn(a, b, s, v) ==
---   \E m \in sent : /\ m.type = "2b" /\ m.bal = b /\ m.slot = s /\ m.val = v /\ m.from = a
+--   \E m \in sent : /\ m.type = "2b" /\ m.bal = b /\ m.slot = s /\ m = v /\ m.from = a
 ghost relation VotedForIn (a : acceptor) (b : BallotTy maxBallot) (s : slot) (v : value) :=
-  msgSet.contains (.phase2b a b s v) sent
+  (.phase2b a b s v) ∈ sent
 
 -- ChosenIn(b, s, v) == \E Q \in Quorums : \A a \in Q : VotedForIn(a, b, s, v)
 ghost relation ChosenIn (b : BallotTy maxBallot) (s : slot) (v : value) :=
@@ -362,5 +342,13 @@ invariant [consistency]
 --   MsgSet := OrdList _,
 --   AcceptorSet := OrdList _
 -- }
+
+-- A small regression configuration; larger configurations above remain optional.
+/-- info: ✅ No violation (explored 5 states) -/
+#guard_msgs in
+#model_check interpreted
+{ slot := Fin 1, value := Fin 1, acceptor := Fin 1, proposer := Fin 1,
+  quorum := MinQuorum (Fin 1), maxBallot := 0 }
+{} (maxDepth := 4) (sequential := true)
 
 end MultiPaxos

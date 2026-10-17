@@ -81,6 +81,15 @@ syntax (name := pickExpression) kw_pick (lineEq term) ? : term
 /-- Binds a variable to a value that satisfies a predicate. -/
 scoped syntax (name := letPick) "let" term (":" term)? ":|" term : doElem
 
+/-- Choose a subset of a finite pool, optionally constrained by a predicate. -/
+scoped syntax (name := letSubset) (priority := high)
+  "let " ident " ⊆ " term (" :| " term)? : doElem
+macro_rules
+  | `(doElem| let $s:ident ⊆ $pool:term $[:| $p:term]?) => do
+    match p with
+    | none => `(doElem| let $s:ident :| $s ⊆ $pool)
+    | some p => `(doElem| let $s:ident :| $s ⊆ $pool ∧ $p)
+
 /-- `require P` means that execution can only proceed if `P` holds. It
 is used to express pre-conditions.
 
@@ -116,6 +125,31 @@ private def ifSomeBinderIdents? (pat : Term) : Option (Array Ident) :=
   | `(($_:hygieneInfo $x:ident, $xs:ident,*)) => some (#[x] ++ xs.getElems)
   | _ => none
 
+/-- Flatten only the conjunction spine; leave the predicates themselves alone. -/
+private partial def choiceConjuncts (p : Term) (acc : Array Term := #[]) : Array Term :=
+  match p with
+  | `(($p:term)) => choiceConjuncts p acc
+  | `($p:term ∧ $q:term) => choiceConjuncts q (choiceConjuncts p acc)
+  | _ => acc.push p
+
+private def isChoiceBound (witness predicate : Term) : Bool :=
+  match predicate with
+  | `($value:term ∈ $_:term)
+  | `($value:term ⊆ $_:term)
+  | `(TSet.contains $value:term $_:term) =>
+    Lean.Parser.Term.dropParens value.raw == Lean.Parser.Term.dropParens witness.raw
+  | _ => false
+
+/-- Put an explicit collection bound before its filters, so the existing
+bounded enumeration instance applies regardless of the user's conjunct order.
+Use the same predicate for the existential guard and the subsequent choice. -/
+private def normalizeChoicePredicate (witness predicate : Term) : MacroM Term := do
+  let terms := choiceConjuncts predicate
+  let some i := terms.findIdx? (isChoiceBound witness) | return predicate
+  if i == 0 then return predicate
+  let ordered := #[terms[i]!] ++ terms.extract 0 i ++ terms.extract (i + 1) terms.size
+  ordered.pop.foldrM (fun p q => `($p ∧ $q)) ordered.back!
+
 /-- Prepend `item` to a `do` sequence, preserving its braced/unbraced shape;
 `none` for an unrecognized sequence shape. -/
 def prependDoSeqItem? [Monad m] [MonadQuotation m]
@@ -134,6 +168,7 @@ macro_rules
     let some ids := ifSomeBinderIdents? witness
       | Macro.throwErrorAt witness
           "unsupported witness pattern for Veil existential `if`; expected an identifier or flat tuple of identifiers"
+    let predicate ← normalizeChoicePredicate witness predicate
     let existsGuard ← match type? with
       | none => `(term| ∃ $[$ids:ident]*, $predicate)
       | some type =>
@@ -187,6 +222,7 @@ macro_rules
   | `(pick $(t)?) => do
     `($(mkIdent `MonadNonDet.pick) $(← t.getDM `(_)))
   | `(doElem| let $x:term $[: $ty:term]? :| $p) => do
+    let p ← normalizeChoicePredicate x p
     let rhs ← `(doElem| $(mkIdent `VeilM.pickSuchThat):ident $(← ty.getDM `(_)) (fun $x => $p))
     /- An identifier binder is bound directly. If spelled as a pattern, then Lean's
     `let`-arrow handler would bind a fresh `__x` and emit `let x := __x` as a

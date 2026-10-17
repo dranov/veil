@@ -100,6 +100,12 @@ type node
 -/
 scoped syntax (name := typeDeclaration) kw_type ident : command
 
+/-- Declare an abstract finite-set carrier with a default concrete representation. -/
+scoped syntax (name := setTypeDeclaration) "set_type" ident " : " term : command
+
+/-- Declare a type with an explicit enumeration of all its values. -/
+scoped syntax (name := finiteTypeDeclaration) "finite_type " ident : command
+
 /--Declare an enum type.
 
 Example:
@@ -177,6 +183,7 @@ Functions can also be defined with names for the arguments, e.g.
 `function currentRound (n : address) : round`
 -/
 scoped syntax (name := functionStateComponent) kw_function : stateComponentKind
+scoped syntax (name := partialFunctionStateComponent) "partial" kw_function : stateComponentKind
 
 /-- This state component is the state of another module. -/
 scoped syntax (name := moduleStateComponent) kw_module : stateComponentKind

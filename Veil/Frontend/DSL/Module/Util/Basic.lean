@@ -61,6 +61,7 @@ def StateComponentKind.fromStx (k : TSyntax `stateComponentKind) : StateComponen
   | `(stateComponentKind|individual) => StateComponentKind.individual
   | `(stateComponentKind|relation) => StateComponentKind.relation
   | `(stateComponentKind|function) => StateComponentKind.function
+  | `(stateComponentKind|partial function) => StateComponentKind.relation
   | _ => panic! s!"Invalid state component kind: {k}"
 
 instance : ToString StateComponentType where

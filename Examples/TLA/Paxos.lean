@@ -65,11 +65,8 @@ abbrev Msg.ballot (m : Msg ac val blt) : blt :=
 
 abbrev PaxosMsg (ac val : Type) (maxBallot : Nat) := Msg ac val (BallotTy maxBallot)
 
-type MsgSet
-type AcceptorSet
-
-instantiate msgSet : TSet (PaxosMsg acceptor value maxBallot) MsgSet
-instantiate acSet : TSet acceptor AcceptorSet
+set_type MsgSet : PaxosMsg acceptor value maxBallot
+set_type AcceptorSet : acceptor
 
 -- VARIABLES msgs,    \* The set of messages that have been sent.
 --           maxBal,  \* maxBal[a] is the highest-number ballot acceptor a
@@ -95,7 +92,7 @@ assumption [quorum_intersection]
 
 after_init {
   let noBallot : BallotTy maxBallot := ⟨0, Nat.zero_lt_succ _⟩
-  msgs := msgSet.empty
+  msgs := ∅
   maxVBal A := noBallot
   maxBal A := noBallot
   maxVal A := none
@@ -103,7 +100,7 @@ after_init {
 
 -- Send(m) == msgs' = msgs \cup {m}
 procedure Send (m : PaxosMsg acceptor value maxBallot) {
-  msgs := msgSet.insert m msgs
+  msgs := insert m msgs
 }
 
 -- (***************************************************************************)
@@ -119,9 +116,9 @@ action Phase1a (b : BallotTy maxBallot) {
   let noBallot : BallotTy maxBallot := ⟨0, Nat.zero_lt_succ _⟩
   require b ≠ noBallot
 
-  require ¬ ∃ msg : { m // m ∈ msgs },
+  require ¬ ∃ msg ∈ msgs,
     -- NOTE: If this `match` has type `Prop`, then synthesizing its `Decidable` instance might be difficult
-    (match msg.val with
+    (match msg with
       | .phase1a bal => decide $ bal = b
       | _ => false) = true
   Send (.phase1a b)
@@ -145,10 +142,10 @@ action Phase1a (b : BallotTy maxBallot) {
 --      /\ UNCHANGED <<maxVBal, maxVal>>
 
 action Phase1b (a : acceptor) {
-  let m : { m // m ∈ msgs } :| (match m.val with
+  let m :| m ∈ msgs ∧ (match m with
     | .phase1a b => b > maxBal a
     | _ => false) = true
-  let b := m.val.ballot
+  let b := m.ballot
   Send (.phase1b a b (maxVBal a) (maxVal a))
   maxBal a := b
 }
@@ -177,24 +174,24 @@ action Phase1b (a : acceptor) {
 
 ghost relation quorumCovered (Q : quorum) (S : MsgSet) :=
 -- ghost relation quorumCovered (Q : quorum) (S : List (PaxosMsg acceptor value maxBallot)) :=
-  ∀ a ∈ Q, ∃ m : { m // m ∈ S }, (match m.val with
+  ∀ a ∈ Q, ∃ m ∈ S, (match m with
     | .phase1b acc .. => decide $ acc = a
     | _ => false) = true
 
 ghost relation allNoBallot (S : MsgSet) :=
 -- ghost relation allNoBallot (S : List (PaxosMsg acceptor value maxBallot)) :=
   let noBallot : BallotTy maxBallot := ⟨0, Nat.zero_lt_succ _⟩
-  ∀ m : { m // m ∈ S }, (match m.val with
+  ∀ m ∈ S, (match m with
     | .phase1b _ _ maxVBal _ => decide $ maxVBal = noBallot
     | _ => false) = true
 
 ghost relation validBallotExists (S : MsgSet) (b : BallotTy maxBallot) (v : value) :=
 -- ghost relation validBallotExists (S : List (PaxosMsg acceptor value maxBallot)) (b : BallotTy maxBallot) (v : value) :=
   ∃ c < b, c.val ≠ 0 ∧
-    (∀ m : { m // m ∈ S }, (match m.val with
+    (∀ m ∈ S, (match m with
       | .phase1b _ _ maxVBal _ => decide $ maxVBal ≤ c
       | _ => false) = true) ∧
-    (∃ m : { m // m ∈ S }, (match m.val with
+    (∃ m ∈ S, (match m with
       | .phase1b _ _ maxVBal maxVal => decide $ maxVBal = c ∧ maxVal = some v
       | _ => false) = true)
 
@@ -205,8 +202,8 @@ action Phase2a (b : BallotTy maxBallot) {
   require b ≠ noBallot
 
   -- ~ \E m \in msgs : (m.type = "2a") /\ (m.bal = b)
-  require ¬ ∃ msg : { m // m ∈ msgs },
-    (match msg.val with
+  require ¬ ∃ msg ∈ msgs,
+    (match msg with
       | .phase2a bal _ => decide $ bal = b
       | _ => false) = true
 
@@ -217,11 +214,14 @@ action Phase2a (b : BallotTy maxBallot) {
     we pick a subset of acceptors, and construct S by filtering messages from those
     acceptors. As we only care about condition `m.acc = a`.
     This reduces the non-deterministic choices to 2^|acceptors|.  -/
-  let selectedAcceptors ← pick AcceptorSet
-  let S := msgSet.filter msgs fun m =>
+  let senders : AcceptorSet := TSet.filterMap msgs fun m =>
     match m with
-    | .phase1b acc bal .. => bal == b && acSet.contains acc selectedAcceptors
-    | _ => false
+    | .phase1b acc bal .. => if bal = b then some acc else none
+    | _ => none
+  let selectedAcceptors ⊆ senders
+  let S := {m ∈ msgs | (match m with
+    | .phase1b acc bal .. => bal == b && decide (acc ∈ selectedAcceptors)
+    | _ => false) = true}
   -- NOTE: The `Decidable` instance for the second `require` can be synthesized here, while the first one cannot,
   -- so we put them separately to avoid certain hussle
   require quorumCovered Q S
@@ -239,16 +239,15 @@ action Phase2a (b : BallotTy maxBallot) {
 --   \E m \in msgs :
 --     /\ m.type = "2a"
 --     /\ m.bal >= maxBal[a]
---     /\ Send([type |-> "2b", bal |-> m.bal, val |-> m.val, acc |-> a])
+--     /\ Send([type |-> "2b", bal |-> m.bal, val |-> m, acc |-> a])
 --     /\ maxVBal' = [maxVBal EXCEPT ![a] = m.bal]
 --     /\ maxBal' = [maxBal EXCEPT ![a] = m.bal]
---     /\ maxVal' = [maxVal EXCEPT ![a] = m.val]
+--     /\ maxVal' = [maxVal EXCEPT ![a] = m]
 
 action Phase2b (a : acceptor) {
-  let m : { m // m ∈ msgs } :| (match m.val with
+  let m :| m ∈ msgs ∧ (match m with
     | .phase2a bal _ => decide $ bal ≥ maxBal a
     | _ => false) = true
-  let m := m.val
   -- NOTE: `v` should be obtained right after knowing that `m` is a valid 2a message,
   -- but currently we cannot do that, so use a trick
   let b := m.ballot
@@ -276,7 +275,7 @@ action Phase2b (a : acceptor) {
 -- (* learns that a value has been chosen from messages of type "2b".         *)
 -- (***************************************************************************)
 -- VotedForIn(a, v, b) == \E m \in msgs : /\ m.type = "2b"
---                                        /\ m.val  = v
+--                                        /\ m  = v
 --                                        /\ m.bal  = b
 --                                        /\ m.acc  = a
 
@@ -285,7 +284,7 @@ action Phase2b (a : acceptor) {
 
 -- Chosen(v) == \E b \in Ballots : ChosenIn(v, b)
 ghost relation VotedForIn (a : acceptor) (v : value) (b : BallotTy maxBallot) :=
-  msgSet.contains (.phase2b a b v) msgs
+  (.phase2b a b v) ∈ msgs
 ghost relation ChosenIn (v : value) (b : BallotTy maxBallot) :=
   ∃ (Q : quorum), ∀ a ∈ Q, VotedForIn a v b
 ghost relation Chosen (v : value) :=
@@ -309,5 +308,12 @@ invariant [Consistency] ∀ v1 v2, Chosen v1 ∧ Chosen v2 → v1 = v2
 --   MsgSet := OrdList (PaxosMsg (Fin 3) (Fin 2) 3),
 --   AcceptorSet := OrdList (Fin 3)
 -- }
+
+-- A small regression configuration; larger configurations above remain optional.
+/-- info: ✅ No violation (explored 12 states) -/
+#guard_msgs in
+#model_check interpreted
+{ acceptor := Fin 2, value := Fin 2, quorum := MinQuorum (Fin 2), maxBallot := 0 }
+{} (maxDepth := 4) (sequential := true)
 
 end Paxos

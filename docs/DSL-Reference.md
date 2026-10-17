@@ -114,8 +114,133 @@ See `Std.lean` for the complete list of type classes.
 
 ### 4. State and Theory Components
 
+#### Finite sets
+
+Finite-set carriers can be declared with `set_type`:
+
+```lean
+type node
+set_type Nodes : node
+individual seen : Nodes
+```
+
+This introduces an abstract type `Nodes` and the instance `Nodes_set : TSet node Nodes`.
+Specifications remain independent of the concrete set representation. Model checking
+defaults `Nodes` to `Std.ExtTreeSet` of the instantiated node type, so
+`#model_check interpreted { node := Fin 3 } {}` suffices. Override the carrier with
+`{ node := Fin 3, Nodes := OrdList (Fin 3) }` when desired. Nested declarations
+such as `set_type Families : Nodes` receive corresponding nested defaults.
+
+Set values support `∅`, `{x}`, `{x, y, z}`, `insert x S`, `S ∪ T`, `S ∩ T`,
+`S \ T`, and `S ⊆ T`. Membership remains `x ∈ S`. `TSet.Nonempty S` and
+`TSet.Disjoint S T` are decidable by inspecting the sets, even when their element
+type is infinite. These operations also work with manually declared `TSet` carriers.
+
+`set_type` additionally supplies `Nodes_laws : LawfulTSet node Nodes`. This provides
+extensional equality (`TSet.ext`), membership laws for filters/intersections/list
+construction, duplicate-free enumeration, and the relationship between cardinality
+and enumeration length. The tree-set, sorted-list, and sorted-array carriers all
+satisfy these laws; custom carriers can implement `LawfulTSet` alongside `TSet`.
+The laws support ordinary Lean proofs with `simp` and `TSet.ext`; higher-order
+collection operations may require a Lean proof rather than automatic SMT discharge.
+
+Use `card S` for set cardinality and `card {x ∈ S | P x}` to count matching
+members. Express emptiness as `S = ∅` and absence of a matching member as
+`¬ ∃ x ∈ S, P x`.
+
+`TSet.countWhere S P` is equivalent to the filtered cardinality above.
+`TSet.countDistinct messages (fun m => m.sender)` counts distinct images without
+introducing another set carrier. These operate on the collection itself.
+`countFinite node P` counts a predicate over an explicitly enumerable whole
+type and removes any duplicates in its enumeration first.
+
+Exact comprehensions use `{x ∈ S | P x}` to filter an existing set and
+`({x : node | P x} : Nodes)` to construct a set from an explicitly enumerable
+type. The bounded form preserves the source carrier and does not require an
+enumeration of the element type. Both forms include every matching member and
+exclude every nonmatching one. Whole-type comprehensions require
+`Enumeration node`; ordinary `type node` declarations do not assume finiteness.
+
+Set images use `{f x | x ∈ S}`; Cartesian products use `S ×ˢ T` and associate
+to the right, matching Lean's pair types. Record families are images too, for example
+`({{ sender := me, receiver := n } | n ∈ nodes} : Messages)`. These operations
+traverse their inputs and remove duplicates in the result. An expected result
+carrier takes precedence. Otherwise, images preserve the source carrier when the
+element type is unchanged, use a unique matching local `TSet` carrier when one
+exists, and fall back to `Std.ExtTreeSet` for concretely ordered output types.
+Ambiguous carriers require an annotation. Products use the same result-carrier
+inference for their pair type.
+
+Bounded quantifiers `∀ x ∈ S, P x` and `∃ x ∈ S, P x` decide their predicates
+by traversing `S`, without requiring `Enumeration` of its element type. They
+support empty sets, nested bounds, and ordinary Lean lists. Their logical meaning
+is the usual membership implication/conjunction, so existing Lean proofs apply.
+A bound depending on its own quantified variable retains Lean's ordinary semantics
+and is not a single finite collection to traverse.
+
+A collection bound is preserved when a nondeterministic choice adds predicates:
+`let m :| m ∈ messages ∧ P m` and `if m :| m ∈ messages ∧ P m then … else …`
+enumerate members of `messages`, then filter them. This also works with
+`TSet.contains m messages` and nested conjunctions. The bound can appear anywhere
+among the conjuncts: `P m ∧ m ∈ messages` works too. No enumeration of the whole
+message type is required, and every qualifying member remains a possible choice.
+The `if` form takes its else branch if none qualify.
+
+Subset choice can bind a set directly:
+
+```lean
+let S ⊆ available
+let S ⊆ (available ∩ requested) :| TSet.Nonempty S
+let S ⊆ available :| card S = k
+```
+
+These expand to existing nondeterministic choice with a subset bound first.
+Candidates come from `TSet.subsets available`, including the empty set; additional
+predicates filter those candidates. `TSet.subsetsOfSize available k` exposes the
+filtered list directly. `∀ S ⊆ available, P S` and `∃ S ⊆ available, P S` likewise
+quantify over that finite powerset. Its size is exponential in the pool size.
+Conditional choice uses `if S :| S ⊆ available ∧ P S then … else …`.
+
+Use `⋃ c ∈ Clients, allocated c` for an indexed union and `TSet.flatten family`
+to union a set of sets. Both return `∅` for an empty family. Indexed intersections
+specify their ambient set: `⋂ c ∈ Clients within U, allocated c` includes exactly
+the members of `U` present in every indexed set, and returns `U` when `Clients` is
+empty. The index collection and result collection may use different carriers;
+none of these operations requires an enumeration of their entire element types.
+
+Declare `finite_type node` when the entire node type is intended to be finite.
+It adds `node_enum : Enumeration node` to an ordinary `type node` declaration;
+model checking supplies that instance from the chosen concrete type. Use
+`(TSet.univ node : Nodes)` for the whole universe and `typeCard node` for the
+cardinality of the type. Universes deduplicate their enumeration through the set
+carrier. Ordinary `type` declarations remain potentially infinite; explicit
+subdomain sets and ordered lists remain separate from a whole-type universe.
+
+Inclusive natural-number intervals use `({lo ..= hi} : Numbers)` (or
+`TSet.interval lo hi`). For integers, including negative endpoints, use
+`TSet.intInterval lo hi`. Descending intervals are empty; equal endpoints give a
+singleton. The interval membership laws characterize both endpoints inclusively,
+and `TSet.card_interval` gives natural-interval cardinality as `hi + 1 - lo`.
+
+For example, the allocation action can combine these operations directly:
+
+```lean
+finite_type client
+finite_type resource
+set_type Clients : client
+set_type Resources : resource
+function allocated : client → Resources
+
+after_init { allocated C := ∅ }
+action allocate (c : client) {
+  let used := ⋃ who ∈ (TSet.univ client : Clients), allocated who
+  let available := (TSet.univ resource : Resources) \ used
+  let grant ⊆ available :| card grant > 0
+  allocated c := allocated c ∪ grant
+}
+```
+
 State components define the **signature** of your transition system.
-There are three kinds:
 
 #### Individuals
 
@@ -148,6 +273,44 @@ Total functions from domain to codomain:
 function currentRound : node -> Nat
 immutable function nextNode : node -> node
 ```
+
+#### Partial Functions
+
+A partial function has at most one output for each input. An input can have no
+output:
+
+```lean
+partial function owner : vertex -> node
+partial function entry : node -> round -> value
+immutable partial function parent (child : node) : node
+```
+
+These declarations create Boolean relations: `owner v n` tests whether vertex
+`v` maps to node `n`. Use a guarded choice such as `if n :| owner v n then ...`
+to read an output that might be absent. There is no totality axiom or implicit
+default output.
+
+Point assignments maintain the functional interpretation:
+
+```lean
+owner v n := true      -- replace any previous output of v with n
+owner v n := false     -- remove this edge, preserving a different output
+owner v N := false     -- remove every output of v
+owner V n := true      -- map every vertex to n
+owner V N := false     -- clear the entire partial function
+```
+
+A Boolean expression on the right follows the same rule: true replaces the
+output; false removes only the specified edge. Arrow assignments and point
+havoc use this rule too. Updates with a universal output index, whole-field
+assignments, and whole-field havoc retain ordinary relation semantics.
+
+Veil generates `<name>_coherence`, requiring that two outputs for the same input
+are equal. For mutable partial functions this is an **invariant to verify**:
+initialization, bulk updates, havoc, and relational transitions must establish
+or preserve it. For immutable partial functions it is a background assumption,
+also checked against the theory supplied to the model checker. Partial functions
+use the configured **relation** field representation.
 
 #### Mutability
 

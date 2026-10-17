@@ -14,8 +14,7 @@ veil module Raft
 -- \* The set of server IDs
 -- CONSTANTS Server
 type server
-type serverSet
-instantiate sSet: TSet server serverSet
+set_type serverSet : server
 -- \* Server states.
 -- CONSTANTS Follower, Candidate, Leader
 enum serverStates = {Follower, Candidate, Leader}
@@ -42,9 +41,7 @@ structure logEntry (value : Type) where
   term : Nat
   value : Nat
 
-type logSet
-instantiate lSet: TSet (logEntry value) logSet
-
+set_type logSet : logEntry value
 -- Unified Message structure containing all fields from all message types
 -- Different message types use different subsets of these fields
 @[veil_decl]
@@ -84,9 +81,7 @@ structure Election (server value serverSet : Type) where
   evotes    : serverSet                -- set of servers that voted for the leader
   evoterLog : List (logEntry value)    -- voters' logs (simplified from server → log mapping)
 
-type electionSet
-instantiate eSet: TSet (Election server value serverSet) electionSet
-
+set_type electionSet : Election server value serverSet
 -- \* Maximum number of client requests
 -- CONSTANTS MaxClientRequests
 immutable individual MaxClientRequests : Nat
@@ -126,7 +121,7 @@ relation pcState : server → serverStates → Bool
 -- \* The candidate the server voted for in its current term, or
 -- \* Nil if it hasn't voted for any.
 -- VARIABLE votedFor
-relation votedFor : server → server → Bool
+partial function votedFor : server → server
 -- serverVars == <<currentTerm, state, votedFor>>
 
 -- \* The set of requests that can go into the log
@@ -271,8 +266,8 @@ procedure Reply (response request : Message value server) {
 --                    /\ allLogs   = {}
 --                    /\ voterLog  = [i \in Server |-> [j \in {} |-> <<>>]]
 procedure InitHistoryVars {
-  allLogs    := lSet.empty
-  elections  := eSet.empty
+  allLogs    := ∅
+  elections  := ∅
   voterLog I J := []
 }
 
@@ -289,7 +284,7 @@ procedure InitServerVars {
 --                      /\ votesGranted   = [i \in Server |-> {}]
 procedure InitCandidateVars {
   votesSent I := false
-  votesGranted I := sSet.empty
+  votesGranted I := ∅
 }
 
 -- \* The values nextIndex[i][i] and matchIndex[i][i] are never read, since the
@@ -344,7 +339,7 @@ after_init {
 action Restart (i : server) {
   pcState i T := T == Follower
   votesSent i := false
-  votesGranted i := sSet.empty
+  votesGranted i := ∅
   voterLog i J := []
   nextIndex i J := 1
   matchIndex i J := 0
@@ -368,7 +363,7 @@ action Timeout (i : server) {
   currentTerm i := currentTerm i + 1
   votedFor i J := false
   votesSent i := false
-  votesGranted i := sSet.empty
+  votesGranted i := ∅
   voterLog i J := []
 }
 
@@ -494,7 +489,7 @@ action AppendEntries (i : server) (j : server) {
 action BecomeLeader (i : server) {
   require pcState i Candidate
   -- Quorum == {i \in SUBSET(Server) : Cardinality(i) * 2 > Cardinality(Server)}
-  require sSet.count (votesGranted i) * 2 > SIZE
+  require card (votesGranted i) * 2 > SIZE
   pcState i T := T == Leader
   nextIndex i R := List.length (logs i) + 1
   matchIndex i R := 0
@@ -504,7 +499,7 @@ action BecomeLeader (i : server) {
       elog      := logs i,
       evotes    := votesGranted i,
       evoterLog := voterLog i fixServer }
-  elections := eSet.insert newElection elections
+  elections := insert newElection elections
 }
 
 -- \* Leader i receives a client request to add v to the log.
@@ -563,21 +558,21 @@ action ClientRequest (i : server) {
 
 -- Helper procedure: Agree(index) returns set of servers that agree up through index
 procedure Agree (i : server) (index : Nat) {
-  let serverMax :| ∀s, matchIndex i s ≥ index → sSet.contains s serverMax
-  let agreeSet := sSet.insert i serverMax
+  let serverMax : serverSet :| ∀ s, matchIndex i s ≥ index → s ∈ serverMax
+  let agreeSet := insert i serverMax
   return agreeSet
 }
 
 ghost relation isQuorum (sset : serverSet) (size : Nat) :=
-  sSet.count sset * 2 > size
+  card sset * 2 > size
 
 procedure agreeIndexes (i : server) {
   let logLength := List.length (logs i)
   let agreeSets ← pick (Fin logLength → serverSet)
   assume ∀ idx : Fin logLength, ∀ s,
-    matchIndex i s ≥ idx.val + 1 → sSet.contains s (agreeSets idx)
+    matchIndex i s ≥ idx.val + 1 → (s ∈ (agreeSets idx))
   let agreeIndexs := (List.finRange logLength).filterMap fun idx =>
-    if isQuorum (sSet.insert i (agreeSets idx)) SIZE then some (idx.val + 1) else none
+    if isQuorum (insert i (agreeSets idx)) SIZE then some (idx.val + 1) else none
   return agreeIndexs
 }
 
@@ -656,7 +651,7 @@ procedure HandleRequestVoteRequest (i : server) (j : server) (m : Message value 
   let lastTerm_i ← LastTerm (logs i)
   let isGrant := grant m i j lastTerm_i
   if decide isGrant then
-    votedFor i R := R == j
+    votedFor i j := true
   let response : Message value server :=
     { mtype         := .RequestVoteResponse,
       mterm         := currentTerm i,
@@ -696,7 +691,7 @@ procedure HandleRequestVoteResponse (i : server) (j : server) (m : Message value
   require m.mterm = currentTerm i
   -- assume m.mterm = currentTerm i
   if m.mvoteGranted then
-    votesGranted i := sSet.insert j (votesGranted i)
+    votesGranted i := insert j (votesGranted i)
     voterLog i j := m.mlog
   Discard m
 }
@@ -1081,10 +1076,7 @@ open Std
 --     server := Fin 3,
 --     value := Fin 2,
 --     serverStates := serverStates_IndT,
---     serverSet := ExtTreeSet (Fin 3) compare,
---     electionSet := ExtTreeSet (Election (Fin 3) (Fin 2) (ExtTreeSet (Fin 3) compare)) compare,
 --     msetMsg := TMapMultiset (Message (Fin 2) (Fin 3)),
---     logSet := ExtTreeSet (logEntry (Fin 2)) compare
 --   }
 --   {
 --     SIZE := 3,

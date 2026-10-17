@@ -2,6 +2,7 @@ module
 
 public meta import Veil.Frontend.DSL.Module.Util.LocalRProp
 public meta import Veil.Core.Tools.ModelChecker.TransitionSystem
+public meta import Veil.Frontend.SetType
 
 public meta section
 
@@ -198,22 +199,26 @@ def Module.mkInstantiationStructure [Monad m] [MonadQuotation m] [MonadExceptOf 
     match p.kind with
     | .sort sortKind =>
       let sort ← p.ident
+      if let some elem := p.setElementType then
+        return some (← `(Command.structSimpleBinder|
+          $sort:ident : Veil.SetCarrier $elem := by veil_default_set_carrier), none)
       match sortKind with
       | .enumSort =>
         -- Enum type: add default value of SortName_IndT
         let defaultType := Ident.toEnumConcreteType sort
         return some (← `(Command.structSimpleBinder| $sort:ident : Type := $defaultType),
-                     ← `(Lean.Parser.Term.structInstField| $sort:ident := $defaultType))
+                     some (← `(Lean.Parser.Term.structInstField| $sort:ident := $defaultType)))
       | .uninterpretedSort =>
         -- Regular sort: no default in the structure; defaults to PUnit in the Inhabited instance
         return some (← `(Command.structSimpleBinder| $sort:ident : Type),
-                     ← `(Lean.Parser.Term.structInstField| $sort:ident := $(mkIdent ``PUnit)))
+                     some (← `(Lean.Parser.Term.structInstField| $sort:ident := $(mkIdent ``PUnit))))
     | .userParameter =>
       let id ← p.ident
       return some (← `(Command.structSimpleBinder| $id:ident : $(p.type)),
-                   ← `(Lean.Parser.Term.structInstField| $id:ident := $(mkIdent ``default)))
+                   some (← `(Lean.Parser.Term.structInstField| $id:ident := $(mkIdent ``default))))
     | _ => return none
   let instances := #[``Repr].map Lean.mkIdent
+  let defaultFields := defaultFields.filterMap id
   let structureCmd ← `(structure $instantiationType where $[$fields]* deriving $[$instances:ident],*)
   let inhabitedCmd ← `(command|
     instance : $(mkIdent ``Inhabited) $instantiationType where

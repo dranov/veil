@@ -143,10 +143,10 @@ inductive ExtStatus where
 deriving instance Veil.Enumeration for ExtStatus
 
 -- Container types
-type InstanceSet
-type CommandSet
-type ReplicaSet
-type SeqNumSet
+set_type InstanceSet : Instance replica seqNum
+set_type CommandSet : command
+set_type ReplicaSet : replica
+set_type SeqNumSet : seqNum
 
 -- Log entry record
 @[veil_decl]
@@ -159,7 +159,7 @@ structure LogEntry (inst cmd dps blt seq : Type) where
   seq : seq
 deriving instance Veil.Enumeration for LogEntry
 
-type LogEntrySet
+set_type LogEntrySet : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum
 
 -- Committed tuple: (command, deps, seq)
 @[veil_decl]
@@ -169,7 +169,7 @@ structure CommittedTuple (cmd deps seq : Type) where
   seq : seq
 deriving instance Veil.Enumeration for CommittedTuple
 
-type CommittedTupleSet
+set_type CommittedTupleSet : CommittedTuple command InstanceSet seqNum
 
 -- Message structure
 @[veil_decl]
@@ -187,20 +187,11 @@ structure Msg (rep inst blt cmd dps seq stat : Type) where
   extStatus : stat      -- for try-pre-accept-reply and prepare-reply
 deriving instance Veil.Enumeration for Msg
 
-type MsgSet
+set_type MsgSet : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus
 
 -- Order relations for seqNum and ballot_num
 instantiate seqOrd : TotalOrderWithZero seqNum
 instantiate ballotOrd : TotalOrderWithZero ballot_num
-
--- Set instantiations
-instantiate instSet : TSet (Instance replica seqNum) InstanceSet
-instantiate cmdSet : TSet command CommandSet
-instantiate repSet : TSet replica ReplicaSet
-instantiate seqSet : TSet seqNum SeqNumSet
-instantiate logSet : TSet (LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum) LogEntrySet
-instantiate commitSet : TSet (CommittedTuple command InstanceSet seqNum) CommittedTupleSet
-instantiate msgTSet : TSet (Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus) MsgSet
 
 -- Immutable constants
 immutable individual none : command
@@ -327,33 +318,31 @@ assumption [leader_in_slow_quorum]
 --   /\ preparing = [r \in Replicas |-> {}]
 
 after_init {
-  sentMsg := msgTSet.empty
-  cmdLog R := logSet.empty
-  proposed := cmdSet.empty
+  sentMsg := ∅
+  cmdLog R := ∅
+  proposed := ∅
   crtInst R := oneSeq
-  leaderOfInst R := instSet.empty
-  committedMap I := commitSet.empty
+  leaderOfInst R := ∅
+  committedMap I := ∅
   ballots := one
-  preparing R := instSet.empty
+  preparing R := ∅
 }
 
 -- Helper: Max of sequence numbers in a set
 procedure maxSeqInLog (entries : LogEntrySet) {
-  let seqs := logSet.toList entries |>.map (fun e => e.seq)
+  let seqs := TSet.toList entries |>.map (fun e => e.seq)
   let result := seqs.foldl (fun acc s => if seqOrd.le acc s then s else acc) seqOrd.zero
   return result
 }
 
 -- Helper: Get all instances from log entries
 procedure depsFromLog (entries : LogEntrySet) {
-  let insts := logSet.toList entries |>.map (fun e => e.inst)
-  let result := insts.foldl (fun acc i => instSet.insert i acc) instSet.empty
-  return result
+  return ({e.inst | e ∈ entries} : InstanceSet)
 }
 
 -- Helper: Get old records for an instance
 procedure getOldRecs (entries : LogEntrySet) (inst : Instance replica seqNum) {
-  let oldRecs := logSet.filter entries (fun rec => rec.inst = inst)
+  let oldRecs := {rec ∈ entries | (rec.inst = inst)}
   return oldRecs
 }
 
@@ -402,7 +391,7 @@ action StartPhase1 (C : command) (cleader : replica) (inst : Instance replica se
   let oldRecs ← getOldRecs (cmdLog cleader) inst
 
   -- Update cmdLog: remove old records and add new one
-  let logWithoutOld := logSet.toList oldRecs |>.foldl (fun acc rec => logSet.remove rec acc) (cmdLog cleader)
+  let logWithoutOld := cmdLog cleader \ oldRecs
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := inst,
     status := .PreAccepted,
@@ -411,10 +400,10 @@ action StartPhase1 (C : command) (cleader : replica) (inst : Instance replica se
     deps := newDeps,
     seq := newSeq
   }
-  cmdLog cleader := logSet.insert newEntry logWithoutOld
+  cmdLog cleader := insert newEntry logWithoutOld
 
   -- Update leaderOfInst
-  leaderOfInst cleader := instSet.insert inst (leaderOfInst cleader)
+  leaderOfInst cleader := insert inst (leaderOfInst cleader)
 
   -- Send pre-accept messages to all replicas in quorum except leader
   -- (simplified: we send to all replicas and the receiver will check)
@@ -432,13 +421,13 @@ action StartPhase1 (C : command) (cleader : replica) (inst : Instance replica se
     cmd := C,
     deps := newDeps,
     seq := newSeq,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := default
   }
 
   -- Remove old messages and add new ones
-  let msgWithoutOld := msgTSet.toList oldMsgToRemove |>.foldl (fun acc m => msgTSet.remove m acc) sentMsg
-  sentMsg := msgTSet.insert preAcceptMsg msgWithoutOld
+  let msgWithoutOld := sentMsg \ oldMsgToRemove
+  sentMsg := insert preAcceptMsg msgWithoutOld
 }
 
 -- Propose(C, cleader) ==
@@ -451,18 +440,18 @@ action StartPhase1 (C : command) (cleader : replica) (inst : Instance replica se
 --         /\ UNCHANGED << executed, committed, ballots, preparing >>
 
 action Propose (C : command) (cleader : replica) {
-  require ¬ cmdSet.contains C proposed
+  require ¬ (C ∈ proposed)
   let newInst : Instance replica seqNum := { leader := cleader, idx := crtInst cleader }
   let newBallot : Ballot ballot_num replica := { num := ballotOrd.zero, owner := cleader }
 
-  proposed := cmdSet.insert C proposed
+  proposed := insert C proposed
 
   -- Increment crtInst
   let nextIdx ← succSeq (crtInst cleader)
   crtInst cleader := nextIdx
 
   -- Call StartPhase1
-  StartPhase1 C cleader newInst newBallot msgTSet.empty
+  StartPhase1 C cleader newInst newBallot (∅ : MsgSet)
 }
 
 
@@ -499,19 +488,18 @@ action Propose (C : command) (cleader : replica) {
 --                                 committed, ballots, preparing >>
 
 action Phase1Reply (rep : replica) {
-  let msg :| msgTSet.contains msg sentMsg ∧ msg.msgType = MsgType.PreAccept ∧ msg.dst = rep
+  let msg :| (msg ∈ sentMsg) ∧ msg.msgType = MsgType.PreAccept ∧ msg.dst = rep
 
   let oldRecs ← getOldRecs (cmdLog rep) msg.inst
 
   -- Check ballot condition: all old records have ballot <= msg.ballot
-  -- require logSet.toList oldRecs |>.all (fun rec =>
+  -- require TSet.toList oldRecs |>.all (fun rec =>
   --   rec.ballot = msg.ballot ∨ ltBallot rec.ballot.num msg.ballot.num)
 
   -- Compute newDeps: msg.deps ∪ (instances in cmdLog \ {msg.inst})
   let localDeps ← depsFromLog (cmdLog rep)
-  let localDepsWithoutMsgInst := instSet.remove msg.inst localDeps
-  let newDeps := instSet.toList localDepsWithoutMsgInst |>.foldl
-    (fun acc i => instSet.insert i acc) msg.deps
+  let localDepsWithoutMsgInst := (localDeps \ {msg.inst})
+  let newDeps := msg.deps ∪ localDepsWithoutMsgInst
 
   -- Compute newSeq: max(msg.seq, 1 + max(log seqs))
   let maxLocalSeq ← maxSeqInLog (cmdLog rep)
@@ -519,11 +507,11 @@ action Phase1Reply (rep : replica) {
   let newSeq := if seqOrd.le msg.seq succMaxLocal then succMaxLocal else msg.seq
 
   -- Compute instCom: instances with committed status
-  let committedEntries := logSet.filter (cmdLog rep) (fun rec => rec.status = .Committed)
+  let committedEntries := {rec ∈ (cmdLog rep) | (rec.status = .Committed)}
   let instCom ← depsFromLog committedEntries
 
   -- Update cmdLog
-  let logWithoutOld := logSet.toList oldRecs |>.foldl (fun acc rec => logSet.remove rec acc) (cmdLog rep)
+  let logWithoutOld := cmdLog rep \ oldRecs
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := msg.inst,
     status := .PreAccepted,
@@ -532,7 +520,7 @@ action Phase1Reply (rep : replica) {
     deps := newDeps,
     seq := newSeq
   }
-  cmdLog rep := logSet.insert newEntry logWithoutOld
+  cmdLog rep := insert newEntry logWithoutOld
 
   -- Update sentMsg: remove msg, add reply
   let replyMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
@@ -548,7 +536,7 @@ action Phase1Reply (rep : replica) {
     committed := instCom,
     extStatus := default
   }
-  sentMsg := msgTSet.insert replyMsg (msgTSet.remove msg sentMsg)
+  sentMsg := insert replyMsg ((sentMsg \ {msg}))
 }
 
 
@@ -596,39 +584,37 @@ action Phase1Reply (rep : replica) {
 --                 /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing >>
 
 action Phase1Fast (cleader : replica) (i : Instance replica seqNum) {
-  require instSet.contains i (leaderOfInst cleader)
+  require (i ∈ (leaderOfInst cleader))
 
   -- Find record in cmdLog
-  let record :| logSet.contains record (cmdLog cleader) ∧
+  let record :| (record ∈ (cmdLog cleader)) ∧
                 record.inst = i ∧
                 record.status = .PreAccepted ∧
                 record.ballot.num = ballotOrd.zero
 
   -- Get all pre-accept replies for this instance
-  let replies := msgTSet.filter sentMsg (fun msg =>
-    msg.inst = i ∧
+  let replies := {msg ∈ sentMsg | (msg.inst = i ∧
     msg.msgType = MsgType.PreAcceptReply ∧
     msg.dst = cleader ∧
     inFastQuorum msg.src cleader ∧
-    msg.ballot = record.ballot)
+    msg.ballot = record.ballot)}
 
   -- All replicas in fast quorum (except leader) have replied
   -- require ∀ rep, inFastQuorum rep cleader → rep ≠ cleader →
-  --   msgTSet.toList replies |>.any (fun msg => msg.src = rep)
+  --   TSet.toList replies |>.any (fun msg => msg.src = rep)
 
   -- All replies have same deps and seq
-  let replyList := msgTSet.toList replies
-  require replyList.all (fun r1 => replyList.all (fun r2 => r1.deps = r2.deps ∧ r1.seq = r2.seq))
+  require (∀ r1 ∈ replies, ∀ r2 ∈ replies, r1.deps = r2.deps ∧ r1.seq = r2.seq)
 
   -- Pick a reply
-  let r :| msgTSet.contains r replies
+  let r :| (r ∈ replies)
 
   -- Check deps subset condition (simplified)
-  let committedEntries := logSet.filter (cmdLog cleader) (fun rec => rec.status = .Committed)
+  let committedEntries := {rec ∈ (cmdLog cleader) | (rec.status = .Committed)}
   let localCom ← depsFromLog committedEntries
 
   -- Update cmdLog
-  let logWithoutRecord := logSet.remove record (cmdLog cleader)
+  let logWithoutRecord := ((cmdLog cleader) \ {record})
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := i,
     status := .Committed,
@@ -637,10 +623,10 @@ action Phase1Fast (cleader : replica) (i : Instance replica seqNum) {
     deps := r.deps,
     seq := r.seq
   }
-  cmdLog cleader := logSet.insert newEntry logWithoutRecord
+  cmdLog cleader := insert newEntry logWithoutRecord
 
   -- Update sentMsg: remove replies, add commit
-  let msgWithoutReplies := msgTSet.toList replies |>.foldl (fun acc m => msgTSet.remove m acc) sentMsg
+  let msgWithoutReplies := sentMsg \ replies
   let commitMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
     msgType := MsgType.Commit,
     src := cleader,
@@ -651,13 +637,13 @@ action Phase1Fast (cleader : replica) (i : Instance replica seqNum) {
     cmd := record.cmd,
     deps := r.deps,
     seq := r.seq,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := default
   }
-  sentMsg := msgTSet.insert commitMsg msgWithoutReplies
+  sentMsg := insert commitMsg msgWithoutReplies
 
   -- Update leaderOfInst
-  leaderOfInst cleader := instSet.remove i (leaderOfInst cleader)
+  leaderOfInst cleader := ((leaderOfInst cleader) \ {i})
 
   -- Update committed map
   let commitTuple : CommittedTuple command InstanceSet seqNum := {
@@ -665,7 +651,7 @@ action Phase1Fast (cleader : replica) (i : Instance replica seqNum) {
     deps := r.deps,
     seq := r.seq
   }
-  committedMap i := commitSet.insert commitTuple (committedMap i)
+  committedMap i := insert commitTuple (committedMap i)
 }
 
 
@@ -705,30 +691,27 @@ action Phase1Fast (cleader : replica) (i : Instance replica seqNum) {
 --                                 committed, ballots, preparing >>
 
 action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
-  require instSet.contains i (leaderOfInst cleader)
+  require (i ∈ (leaderOfInst cleader))
 
   -- Find record in cmdLog
-  let record :| logSet.contains record (cmdLog cleader) ∧
+  let record :| (record ∈ (cmdLog cleader)) ∧
                 record.inst = i ∧
                 record.status = .PreAccepted
 
   -- Get all pre-accept replies for this instance from slow quorum
-  let replies := msgTSet.filter sentMsg (fun msg =>
-    msg.inst = i ∧
+  let replies := {msg ∈ sentMsg | (msg.inst = i ∧
     msg.msgType = .PreAcceptReply ∧
     msg.dst = cleader ∧
     inSlowQuorum msg.src cleader ∧
-    msg.ballot = record.ballot)
+    msg.ballot = record.ballot)}
 
   -- All replicas in slow quorum (except leader) have replied
   -- require ∀ rep, inSlowQuorum rep cleader → rep ≠ cleader →
-  --   msgTSet.toList replies |>.any (fun msg => msg.src = rep)
+  --   TSet.toList replies |>.any (fun msg => msg.src = rep)
 
   -- Compute finalDeps: union of all deps
-  let replyList := msgTSet.toList replies
-  let finalDeps := replyList.foldl (fun acc r =>
-    instSet.toList r.deps |>.foldl (fun acc2 i => instSet.insert i acc2) acc
-  ) instSet.empty
+  let replyList := TSet.toList replies
+  let finalDeps := ⋃ r ∈ replies, r.deps
 
   -- Compute finalSeq: max of all seqs
   let finalSeq := replyList.foldl (fun acc r =>
@@ -736,7 +719,7 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
   ) seqOrd.zero
 
   -- Update cmdLog
-  let logWithoutRecord := logSet.remove record (cmdLog cleader)
+  let logWithoutRecord := ((cmdLog cleader) \ {record})
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := i,
     status := .Accepted,
@@ -745,7 +728,7 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
     deps := finalDeps,
     seq := finalSeq
   }
-  cmdLog cleader := logSet.insert newEntry logWithoutRecord
+  cmdLog cleader := insert newEntry logWithoutRecord
 
   -- Send accept messages
   let dstReplica ← pick replica
@@ -762,11 +745,11 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
     cmd := record.cmd,
     deps := finalDeps,
     seq := finalSeq,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := default
   }
-  let msgWithoutReplies := msgTSet.toList replies |>.foldl (fun acc m => msgTSet.remove m acc) sentMsg
-  sentMsg := msgTSet.insert acceptMsg msgWithoutReplies
+  let msgWithoutReplies := sentMsg \ replies
+  sentMsg := insert acceptMsg msgWithoutReplies
 }
 
 
@@ -794,15 +777,15 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
 --                             committed, ballots, preparing >>
 
 -- action Phase2Reply (rep : replica) {
---   let msg :| msgTSet.contains msg sentMsg ∧ msg.msgType = MsgType.Accept ∧ msg.dst = rep
+--   let msg :| (msg ∈ sentMsg) ∧ msg.msgType = MsgType.Accept ∧ msg.dst = rep
 --   let oldRecs ← getOldRecs (cmdLog rep) msg.inst
 
 --   -- Check ballot condition
---   require logSet.toList oldRecs |>.all (fun rec =>
+--   require TSet.toList oldRecs |>.all (fun rec =>
 --     rec.ballot = (msg.ballot ∨ ltBallot rec.ballot.num msg.ballot.num))
 
 --   -- Update cmdLog
---   let logWithoutOld := logSet.toList oldRecs |>.foldl (fun acc rec => logSet.remove rec acc) (cmdLog rep)
+--   let logWithoutOld := cmdLog rep \ oldRecs
 --   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
 --     inst := msg.inst,
 --     status := Status.Accepted,
@@ -811,7 +794,7 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
 --     deps := msg.deps,
 --     seq := msg.seq
 --   }
---   cmdLog rep := logSet.insert newEntry logWithoutOld
+--   cmdLog rep := insert newEntry logWithoutOld
 
 --   -- Update sentMsg
 --   let replyMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
@@ -822,12 +805,12 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
 --     ballot := msg.ballot,
 --     prevBallot := default,
 --     cmd := default,
---     deps := instSet.empty,
+--     deps := ∅,
 --     seq := default,
---     committed := instSet.empty,
+--     committed := ∅,
 --     extStatus := default
 --   }
---   sentMsg := msgTSet.insert replyMsg (msgTSet.remove msg sentMsg)
+--   sentMsg := insert replyMsg ((sentMsg \ {msg}))
 -- }
 
 
@@ -865,27 +848,26 @@ action Phase1Slow (cleader : replica) (i : Instance replica seqNum) {
 --             /\ UNCHANGED << proposed, executed, crtInst, ballots, preparing >>
 
 action Phase2Finalize (cleader : replica) (i : Instance replica seqNum) {
-  require instSet.contains i (leaderOfInst cleader)
+  require (i ∈ (leaderOfInst cleader))
 
   -- Find record in cmdLog
-  let record :| logSet.contains record (cmdLog cleader) ∧
+  let record :| (record ∈ (cmdLog cleader)) ∧
                 record.inst = i ∧
                 record.status = .Accepted
 
   -- Get all accept replies
-  let replies := msgTSet.filter sentMsg (fun msg =>
-    msg.inst = i ∧
+  let replies := {msg ∈ sentMsg | (msg.inst = i ∧
     msg.msgType = MsgType.AcceptReply ∧
     msg.dst = cleader ∧
     inSlowQuorum msg.src cleader ∧
-    msg.ballot = record.ballot)
+    msg.ballot = record.ballot)}
 
   -- All replicas in slow quorum (except leader) have replied
   -- require ∀ rep, inSlowQuorum rep cleader → rep ≠ cleader →
-  --   msgTSet.toList replies |>.any (fun msg => msg.src = rep)
+  --   TSet.toList replies |>.any (fun msg => msg.src = rep)
 
   -- Update cmdLog
-  let logWithoutRecord := logSet.remove record (cmdLog cleader)
+  let logWithoutRecord := ((cmdLog cleader) \ {record})
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := i,
     status := .Committed,
@@ -894,10 +876,10 @@ action Phase2Finalize (cleader : replica) (i : Instance replica seqNum) {
     deps := record.deps,
     seq := record.seq
   }
-  cmdLog cleader := logSet.insert newEntry logWithoutRecord
+  cmdLog cleader := insert newEntry logWithoutRecord
 
   -- Update sentMsg
-  let msgWithoutReplies := msgTSet.toList replies |>.foldl (fun acc m => msgTSet.remove m acc) sentMsg
+  let msgWithoutReplies := sentMsg \ replies
   let commitMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
     msgType := MsgType.Commit,
     src := cleader,
@@ -908,13 +890,13 @@ action Phase2Finalize (cleader : replica) (i : Instance replica seqNum) {
     cmd := record.cmd,
     deps := record.deps,
     seq := record.seq,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := default
   }
-  sentMsg := msgTSet.insert commitMsg msgWithoutReplies
+  sentMsg := insert commitMsg msgWithoutReplies
 
   -- Update leaderOfInst
-  leaderOfInst cleader := instSet.remove i (leaderOfInst cleader)
+  leaderOfInst cleader := ((leaderOfInst cleader) \ {i})
 
   -- Update committed map
   let commitTuple : CommittedTuple command InstanceSet seqNum := {
@@ -922,7 +904,7 @@ action Phase2Finalize (cleader : replica) (i : Instance replica seqNum) {
     deps := record.deps,
     seq := record.seq
   }
-  committedMap i := commitSet.insert commitTuple (committedMap i)
+  committedMap i := insert commitTuple (committedMap i)
 }
 
 
@@ -943,16 +925,16 @@ action Phase2Finalize (cleader : replica) (i : Instance replica seqNum) {
 --                         sentMsg, ballots, preparing >>
 
 action Commit (rep : replica) {
-  let cmsg :| msgTSet.contains cmsg sentMsg ∧ cmsg.msgType = MsgType.Commit
+  let cmsg :| (cmsg ∈ sentMsg) ∧ cmsg.msgType = MsgType.Commit
 
   let oldRecs ← getOldRecs (cmdLog rep) cmsg.inst
 
   -- Check conditions on old records
-  -- require logSet.toList oldRecs |>.all (fun rec =>
+  -- require TSet.toList oldRecs |>.all (fun rec =>
   --   rec.status ≠ .Committed ∧ leBallot rec.ballot.num cmsg.ballot.num)
 
   -- Update cmdLog
-  let logWithoutOld := logSet.toList oldRecs |>.foldl (fun acc rec => logSet.remove rec acc) (cmdLog rep)
+  let logWithoutOld := cmdLog rep \ oldRecs
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := cmsg.inst,
     status := .Committed,
@@ -961,7 +943,7 @@ action Commit (rep : replica) {
     deps := cmsg.deps,
     seq := cmsg.seq
   }
-  cmdLog rep := logSet.insert newEntry logWithoutOld
+  cmdLog rep := insert newEntry logWithoutOld
 
   -- Update committed map
   let commitTuple : CommittedTuple command InstanceSet seqNum := {
@@ -969,7 +951,7 @@ action Commit (rep : replica) {
     deps := cmsg.deps,
     seq := cmsg.seq
   }
-  committedMap cmsg.inst := commitSet.insert commitTuple (committedMap cmsg.inst)
+  committedMap cmsg.inst := insert commitTuple (committedMap cmsg.inst)
 }
 
 
@@ -996,11 +978,11 @@ action Commit (rep : replica) {
 --                     leaderOfInst, committed >>
 
 action SendPrepare (rep : replica) (i : Instance replica seqNum) {
-  require ¬ instSet.contains i (leaderOfInst rep)
+  require ¬ (i ∈ (leaderOfInst rep))
   require leBallot ballots maxBallot
 
   -- Check no committed record for this instance
-  -- require ¬ (logSet.toList (cmdLog rep) |>.any (fun rec =>
+  -- require ¬ (TSet.toList (cmdLog rep) |>.any (fun rec =>
   --   rec.inst = i ∧ rec.status = Status.Committed))
 
   -- Send prepare messages
@@ -1015,19 +997,19 @@ action SendPrepare (rep : replica) (i : Instance replica seqNum) {
     ballot := { num := ballots, owner := rep },
     prevBallot := default,
     cmd := default,
-    deps := instSet.empty,
+    deps := ∅,
     seq := default,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := default
   }
-  sentMsg := msgTSet.insert prepareMsg sentMsg
+  sentMsg := insert prepareMsg sentMsg
 
   -- Increment ballots
   let nextBal ← succBallot ballots
   ballots := nextBal
 
   -- Add to preparing
-  preparing rep := instSet.insert i (preparing rep)
+  preparing rep := insert i (preparing rep)
 }
 
 
@@ -1099,10 +1081,10 @@ action SendPrepare (rep : replica) (i : Instance replica seqNum) {
 -- }
 
 action ReplyPrepareWithRecord (rep : replica) {
-  let msg :| msgTSet.contains msg sentMsg ∧ msg.msgType = MsgType.Prepare ∧ msg.dst = rep
+  let msg :| (msg ∈ sentMsg) ∧ msg.msgType = MsgType.Prepare ∧ msg.dst = rep
 
   -- Case 1: There is an existing record with lower ballot
-  let rec :| logSet.contains rec (cmdLog rep) ∧
+  let rec :| (rec ∈ (cmdLog rep)) ∧
              rec.inst = msg.inst ∧
              gtBallot msg.ballot.num rec.ballot.num
 
@@ -1118,14 +1100,14 @@ action ReplyPrepareWithRecord (rep : replica) {
     cmd := rec.cmd,
     deps := rec.deps,
     seq := rec.seq,
-    committed := instSet.empty,
+    committed := ∅,
     /- extStatus := extStat -/
     extStatus := default -- TODO
   }
-  sentMsg := msgTSet.insert replyMsg (msgTSet.remove msg sentMsg)
+  sentMsg := insert replyMsg ((sentMsg \ {msg}))
 
   -- Update cmdLog with new ballot
-  let logWithoutRec := logSet.remove rec (cmdLog rep)
+  let logWithoutRec := ((cmdLog rep) \ {rec})
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := rec.inst,
     status := rec.status,
@@ -1134,18 +1116,18 @@ action ReplyPrepareWithRecord (rep : replica) {
     deps := rec.deps,
     seq := rec.seq
   }
-  cmdLog rep := logSet.insert newEntry logWithoutRec
+  cmdLog rep := insert newEntry logWithoutRec
 
   -- Remove from leaderOfInst if present
-  if instSet.contains rec.inst (leaderOfInst rep) then
-    leaderOfInst rep := instSet.remove rec.inst (leaderOfInst rep)
+  if (rec.inst ∈ (leaderOfInst rep)) then
+    leaderOfInst rep := ((leaderOfInst rep) \ {rec.inst})
 }
 
 action ReplyPrepareNoRecord (rep : replica) {
-  let msg :| msgTSet.contains msg sentMsg ∧ msg.msgType = MsgType.Prepare ∧ msg.dst = rep
+  let msg :| (msg ∈ sentMsg) ∧ msg.msgType = MsgType.Prepare ∧ msg.dst = rep
 
   -- Case 2: No existing record for this instance
-  require ¬ (logSet.toList (cmdLog rep) |>.any (fun rec => rec.inst = msg.inst))
+  require ¬ (∃ rec ∈ cmdLog rep, rec.inst = msg.inst)
 
   let replyMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
     msgType := MsgType.PrepareReply,
@@ -1155,12 +1137,12 @@ action ReplyPrepareNoRecord (rep : replica) {
     ballot := msg.ballot,
     prevBallot := { num := ballotOrd.zero, owner := rep },
     cmd := none,
-    deps := instSet.empty,
+    deps := ∅,
     seq := seqOrd.zero,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := .NotSeen
   }
-  sentMsg := msgTSet.insert replyMsg (msgTSet.remove msg sentMsg)
+  sentMsg := insert replyMsg ((sentMsg \ {msg}))
 
   -- Add not-seen entry to cmdLog
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
@@ -1168,10 +1150,10 @@ action ReplyPrepareNoRecord (rep : replica) {
     status := .NotSeen,
     ballot := msg.ballot,
     cmd := none,
-    deps := instSet.empty,
+    deps := ∅,
     seq := seqOrd.zero
   }
-  cmdLog rep := logSet.insert newEntry (cmdLog rep)
+  cmdLog rep := insert newEntry (cmdLog rep)
 }
 
 
@@ -1219,21 +1201,21 @@ action ReplyPrepareNoRecord (rep : replica) {
 --                                   leaderOfInst, preparing >>
 
 action ReplyTryPreacceptOK (rep : replica) {
-  let tpa :| msgTSet.contains tpa sentMsg ∧ tpa.msgType = .TryPreAccept ∧ tpa.dst = rep
+  let tpa :| (tpa ∈ sentMsg) ∧ tpa.msgType = .TryPreAccept ∧ tpa.dst = rep
 
   let oldRecs ← getOldRecs (cmdLog rep) tpa.inst
 
   -- Check ballot and status conditions
-  -- require logSet.toList oldRecs |>.all (fun rec =>
+  -- require TSet.toList oldRecs |>.all (fun rec =>
   --   leBallot rec.ballot.num tpa.ballot.num ∧
   --   rec.status ≠ Status.Accepted ∧ rec.status ≠ Status.Committed)
 
   -- Check compatibility with other records
-  let otherRecs := logSet.filter (cmdLog rep) (fun rec => rec.inst ≠ tpa.inst)
+  let otherRecs := {rec ∈ (cmdLog rep) | (rec.inst ≠ tpa.inst)}
 
-  -- require logSet.toList otherRecs |>.all (fun rec =>
-  --   instSet.contains tpa.inst rec.deps ∨
-  --   (instSet.contains rec.inst tpa.deps ∧ ltSeq rec.seq tpa.seq))
+  -- require TSet.toList otherRecs |>.all (fun rec =>
+  --   (tpa.inst ∈ rec.deps) ∨
+  --   ((rec.inst ∈ tpa.deps) ∧ ltSeq rec.seq tpa.seq))
 
   -- Send OK reply
   let replyMsg : Msg replica (Instance replica seqNum) (Ballot ballot_num replica) command InstanceSet seqNum ExtStatus := {
@@ -1244,15 +1226,15 @@ action ReplyTryPreacceptOK (rep : replica) {
     ballot := tpa.ballot,
     prevBallot := default,
     cmd := default,
-    deps := instSet.empty,
+    deps := ∅,
     seq := default,
-    committed := instSet.empty,
+    committed := ∅,
     extStatus := .OK
   }
-  sentMsg := msgTSet.insert replyMsg (msgTSet.remove tpa sentMsg)
+  sentMsg := insert replyMsg ((sentMsg \ {tpa}))
 
   -- Update cmdLog
-  let logWithoutOld := logSet.toList oldRecs |>.foldl (fun acc rec => logSet.remove rec acc) (cmdLog rep)
+  let logWithoutOld := cmdLog rep \ oldRecs
   let newEntry : LogEntry (Instance replica seqNum) command InstanceSet (Ballot ballot_num replica) seqNum := {
     inst := tpa.inst,
     status := .PreAccepted,
@@ -1261,24 +1243,24 @@ action ReplyTryPreacceptOK (rep : replica) {
     deps := tpa.deps,
     seq := tpa.seq
   }
-  cmdLog rep := logSet.insert newEntry logWithoutOld
+  cmdLog rep := insert newEntry logWithoutOld
 }
 
 action ReplyTryPreacceptConflict (rep : replica) {
-  let tpa :| msgTSet.contains tpa sentMsg ∧ tpa.msgType = MsgType.TryPreAccept ∧ tpa.dst = rep
+  let tpa :| (tpa ∈ sentMsg) ∧ tpa.msgType = MsgType.TryPreAccept ∧ tpa.dst = rep
 
   let oldRecs ← getOldRecs (cmdLog rep) tpa.inst
 
   -- Check ballot and status conditions
-  -- require logSet.toList oldRecs |>.all (fun rec =>
+  -- require TSet.toList oldRecs |>.all (fun rec =>
   --   leBallot rec.ballot.num tpa.ballot.num ∧
   --   rec.status ≠ .Accepted ∧ rec.status ≠ .Committed)
 
   -- Find a conflicting record
-  let conflictRec :| logSet.contains conflictRec (cmdLog rep) ∧
+  let conflictRec :| (conflictRec ∈ (cmdLog rep)) ∧
                      conflictRec.inst ≠ tpa.inst ∧
-                     ¬ instSet.contains tpa.inst conflictRec.deps ∧
-                     (¬ instSet.contains conflictRec.inst tpa.deps ∨ geSeq conflictRec.seq tpa.seq)
+                     ¬ (tpa.inst ∈ conflictRec.deps) ∧
+                     (¬ (conflictRec.inst ∈ tpa.deps) ∨ geSeq conflictRec.seq tpa.seq)
 
   -- let extStat ← statusToExtStatus conflictRec.status
 
@@ -1291,13 +1273,13 @@ action ReplyTryPreacceptConflict (rep : replica) {
     ballot := tpa.ballot,
     prevBallot := default,
     cmd := default,
-    deps := instSet.empty,
+    deps := ∅,
     seq := default,
-    committed := instSet.empty,
+    committed := ∅,
     -- extStatus := extStat
     extStatus := default -- TODO
   }
-  sentMsg := msgTSet.insert replyMsg (msgTSet.remove tpa sentMsg)
+  sentMsg := insert replyMsg ((sentMsg \ {tpa}))
 }
 
 
@@ -1376,15 +1358,15 @@ action ReplyTryPreacceptConflict (rep : replica) {
 
 -- Consistency: At most one value can be committed for each instance
 invariant [Consistency]
-  ∀ i : Instance replica seqNum, commitSet.count (committedMap i) <= 1
+  ∀ i : Instance replica seqNum, card (committedMap i) <= 1
 
 -- Nontriviality: Committed commands are either proposed or none
 ghost relation isProposedOrNone (c : command) :=
-  cmdSet.contains c proposed ∨ c = none
+  (c ∈ proposed) ∨ c = none
 
 invariant [Nontriviality]
   ∀ i : Instance replica seqNum,
-    commitSet.toList (committedMap i) |>.all (fun ct => isProposedOrNone ct.cmd)
+    ∀ ct ∈ committedMap i, isProposedOrNone ct.cmd
 #gen_spec
 #gen_executable
 
@@ -1401,13 +1383,6 @@ invariant [Nontriviality]
 --   replica := Fin 2,
 --   seqNum := Fin 2,
 --   ballot_num := Fin 2,
---   InstanceSet := Std.ExtTreeSet (Instance (Fin 2) (Fin 2)) compare,
---   CommandSet := Std.ExtTreeSet (Fin 1) compare,
---   ReplicaSet := Std.ExtTreeSet (Fin 2) compare,
---   SeqNumSet := Std.ExtTreeSet (Fin 2) compare,
---   LogEntrySet := Std.ExtTreeSet (LogEntry (Instance (Fin 2) (Fin 2)) (Fin 1) (Std.ExtTreeSet (Instance (Fin 2) (Fin 2)) compare) (Ballot (Fin 2) (Fin 2)) (Fin 2)) compare,
---   CommittedTupleSet := Std.ExtTreeSet (CommittedTuple (Fin 1) (Std.ExtTreeSet (Instance (Fin 2) (Fin 2)) compare) (Fin 2)) compare,
---   MsgSet := Std.ExtTreeSet (Msg (Fin 2) (Instance (Fin 2) (Fin 2)) (Ballot (Fin 2) (Fin 2)) (Fin 1) (Std.ExtTreeSet (Instance (Fin 2) (Fin 2)) compare) (Fin 2) ExtStatus) compare
 -- }
 -- {
 --   none := 0,

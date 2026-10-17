@@ -218,6 +218,8 @@ structure Parameter where
   name : Name
   type : Term
   default : Option ParameterDefault := .none
+  /-- Element type for a `set_type` sort; selects its default model carrier. -/
+  setElementType : Option Term := none
   /-- The user-written syntax that resulted in the declaration of this
   parameter. Note that multiple parameters might be due to the same
   user-provided syntax. -/
@@ -247,6 +249,10 @@ structure StateComponent where
   mutability : Mutability
   /-- Is this an `individual`, a `relation`, or ` function`?-/
   kind          : StateComponentKind
+  /-- A partial function is stored as a relation whose last coordinate is the
+  output. Its coherence assertion and point-assignment semantics are generated
+  by the frontend; field representations still treat it as a relation. -/
+  isPartialFunction : Bool := false
   /-- The name of the state component -/
   name          : Name
   /-- The Lean syntax that declares the type of this state component -/
