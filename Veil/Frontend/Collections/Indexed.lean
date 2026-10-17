@@ -67,4 +67,3 @@ scoped macro "⋃ " x:ident " ∈ " s:term ", " body:term : term =>
 scoped macro "⋂ " x:ident " ∈ " s:term " within " ambient:term ", " body:term : term =>
   `(TSet.intersectionsWithin $ambient $s (fun $x => $body))
 end Veil
-

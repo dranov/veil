@@ -5,29 +5,29 @@ translation. The collection examples use the DSL's finite-set vocabulary:
 
 | Operation | Examples |
 | --- | --- |
-| `set_type`, inferred model carriers, literals, membership, union and difference | SimpleAllocator, Room, KVSnap, KVSnapRe, Paxos, MultiPaxos, EPaxos, NOPaxos, Raft, BcastByz |
-| Nonempty and fixed-cardinality subset choices | SimpleAllocator, KVSnap, KVSnapRe, BcastByz |
-| `finite_type` and `TSet.univ` | BcastByz, MultiPaxos |
+| `set_type`, inferred model carriers, literals, membership, union and difference | SimpleAllocator, Room, KVSnap, Paxos, MultiPaxos, EPaxos, NOPaxos, Raft, BcastByz |
+| Nonempty and fixed-cardinality subset choices | SimpleAllocator, KVSnap, BcastByz |
+| `finite_type` and `TSet.univ` | SimpleAllocator, KVSnap, BcastByz |
 | `card` and distinct-sender counts | Room, BcastByz, EPaxos, NOPaxos, Raft |
 | Direct emptiness and bounded absence checks | SimpleAllocator, Room, Paxos, MultiPaxos |
-| Comprehensions, record images and collection-bounded quantifiers | KVSnap, KVSnapRe, Paxos, MultiPaxos, EPaxos, NOPaxos |
+| Comprehensions, record images and collection-bounded quantifiers | KVSnap, Paxos, MultiPaxos, EPaxos, NOPaxos |
 | Indexed unions | SimpleAllocator, MultiPaxos, EPaxos |
 | Inclusive intervals | NOPaxos |
-| Partial functions with generated coherence invariants | KeyValueStore, Raft |
+| Partial functions with generated coherence invariants | Raft |
 | Whole-function nondeterministic initialization | EWD840 |
 
 These translations preserve the distinction between sets, sequences and multisets.
-In particular, MultiPaxos keeps `SlotsUNIV` ordered for its deterministic first-free
+In particular, MultiPaxos keeps its slot enumeration ordered for its deterministic first-free
 slot choice; NOPaxos keeps `ReplicaOrder` ordered for leader selection; snapshot
-histories and protocol logs remain lists; and Raft's message bag remains a
-multiset. Explicit resource and participant subdomains remain explicit parameters.
+histories remain lists and NOPaxos logs remain arrays; and Raft's message bag remains a
+multiset. Universes enumerate the full domains of the updated upstream models.
 
 `set_type` model parameters default to tree sets. Explicit overrides, such as the
-sorted-list carriers shown in KVSnapRe, remain available. See the
+sorted-list carrier shown in KVSnap, remain available. See the
 [DSL reference](../../docs/DSL-Reference.md#finite-sets) for the syntax and laws.
 
 Existing model-checking commands retain their bounds and expected outcomes.
-Paxos, MultiPaxos and NOPaxos additionally run small bounded regression configurations.
+Paxos, MultiPaxos and NOPaxos also run small bounded regression configurations.
 AWSDnsRace, BuggyCircularBuffer and Traffic intentionally expose counterexamples.
 Large model configurations that were commented out remain optional: compiling a
 specification generates its definitions, but does not exhaustively verify those

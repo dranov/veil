@@ -309,4 +309,11 @@ invariant [Consistency] ∀ v1 v2, Chosen v1 ∧ Chosen v2 → v1 = v2
 --   AcceptorSet := OrdList (Fin 3)
 -- }
 
+-- A small regression configuration; larger configurations above remain optional.
+/-- info: ✅ No violation (explored 12 states) -/
+#guard_msgs in
+#model_check interpreted
+{ acceptor := Fin 2, value := Fin 2, quorum := MinQuorum (Fin 2), maxBallot := 0 }
+{} (maxDepth := 4) (sequential := true)
+
 end Paxos

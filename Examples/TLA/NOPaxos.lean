@@ -949,4 +949,12 @@ set_option maxHeartbeats 1600000
 -- }
 
 -- ================================================================================
+-- A small regression configuration; larger configurations above remain optional.
+/-- info: ✅ No violation (explored 22 states) -/
+#guard_msgs in
+#model_check interpreted
+{ replica := Fin 1, value := Fin 2, maxSeq := 0 }
+{ ReplicaOrder := #[0], NoOp := 0, MsgCountLimit := 2 }
+  (maxDepth := 3) (sequential := true)
+
 end NOPaxos

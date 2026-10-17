@@ -20,4 +20,3 @@ instance (priority := high) enumerationSubtypeAnd
     simp [hq]
 
 end Veil
-

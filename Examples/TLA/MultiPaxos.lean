@@ -205,11 +205,10 @@ ghost function ProposeDecrees (T : VotedSet) : DecreeSet :=
 
 -- VS(S, Q) == UNION {m.voted: m \in {m \in S: m.from \in Q}}
 ghost function VS (S : MsgSet) (Q : quorum) : VotedSet :=
-  -- NOTE: Here we implicitly require that S only contains `1b` messages,
-  -- due to some typing issue
-  ⋃ m ∈ S, (match m with
+  -- Pin the message type to infer every parameter of the constructor match.
+  ⋃ m ∈ S, (match (m : MultiPaxosMsg proposer acceptor value maxBallot slot VotedSet DecreeSet) with
     | .phase1b src _ voted => if src ∈ Q then voted else ∅
-    | _ => ∅)
+    | _ => ∅ : VotedSet)
 
 -- Ghost relation: quorum Q is covered by 1b messages in S
 -- Encodes: \A a \in Q: \E m \in S: m.from = a
@@ -343,5 +342,13 @@ invariant [consistency]
 --   MsgSet := OrdList _,
 --   AcceptorSet := OrdList _
 -- }
+
+-- A small regression configuration; larger configurations above remain optional.
+/-- info: ✅ No violation (explored 5 states) -/
+#guard_msgs in
+#model_check interpreted
+{ slot := Fin 1, value := Fin 1, acceptor := Fin 1, proposer := Fin 1,
+  quorum := MinQuorum (Fin 1), maxBallot := 0 }
+{} (maxDepth := 4) (sequential := true)
 
 end MultiPaxos
