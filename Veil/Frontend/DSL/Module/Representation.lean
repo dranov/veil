@@ -247,6 +247,8 @@ structure StateComponent where
   mutability : Mutability
   /-- Is this an `individual`, a `relation`, or ` function`?-/
   kind          : StateComponentKind
+  /-- A partial function is stored as a relation whose last argument is its output. -/
+  isPartialFunction : Bool := false
   /-- The name of the state component -/
   name          : Name
   /-- The Lean syntax that declares the type of this state component -/

@@ -13,6 +13,19 @@ open Lean.Parser.Term
 namespace Veil
 namespace Action.DoElab
 
+/-- The target (left-hand side) of an assignment-shaped statement: plain
+(`:=`), arrow (`←`), or havoc (`:= *`). The single source of truth for what
+counts as an assignment shape — pre-elaboration validation (`Entry.lean`) and
+control-info reporting below must never disagree about it. -/
+def assignmentLhs? (elem : DoElem) : Option Term :=
+  match elem with
+  | `(doReassign| $lhs:ident $[: $_]? := $_) => some ⟨lhs.raw⟩
+  | `(doReassign| $lhs:term $[: $_]? := $_) => some lhs
+  | `(doReassignArrow| $lhs:ident $[: $_]? ← $_) => some ⟨lhs.raw⟩
+  | `(doReassignArrow| $lhs:term $[: $_]? ← $_ $[| $_ $[$_]?]?) => some lhs
+  | `(doElem| $lhs:term := *) => some lhs
+  | _ => none
+
 /-! ## Pre-elaboration: wrapping and control information -/
 
 /-- Internal wrapper keeping application-shaped (`r x := v`) and structure
@@ -21,19 +34,40 @@ Lean's ordinary reassignment pattern analysis. The wrapped syntax is produced
 is not part of Veil's surface language. -/
 scoped syntax (name := stateAssignWrapper) "veil_state_assign% " doElem : doElem
 
+/-- Internal clear preceding a partial-function assignment. Keeping it in the
+same `do` sequence places it before Lean lifts effects from the RHS. -/
+syntax (name := partialFunctionClear) "veil_partial_clear% " term : doElem
+
+@[doElem_control_info partialFunctionClear]
+def partialFunctionClearControlInfo : ControlInfoHandler := fun _ =>
+  return ControlInfo.pure
+
 /-- `f.x := v` OR `r x := v` -/
 private def assignmentNeedsWrapper (lhs : Term) : Bool :=
   (lhs.raw.isIdent && !lhs.raw.getId.isAtomic) || lhs.isApp?.isSome
 
 private def wrapAssignment (stx : Syntax) : TermElabM Syntax := do
   let elem : DoElem := ⟨stx⟩
-  match elem with
-  | `(doReassign| $lhs:term $[: $_]? := $_)
-  | `(doReassignArrow| $lhs:term $[: $_]? ← $_ $[| $_ $[$_]?]?) =>
-    if assignmentNeedsWrapper lhs then
-      return (← `(doElem| veil_state_assign% $elem:doElem)).raw
-    return stx
-  | _ => return stx
+  let some lhs := assignmentLhs? elem | return stx
+  let wrapped ← match elem with
+    | `(doReassign| $_:term $[: $_]? := $_)
+    | `(doReassignArrow| $_:term $[: $_]? ← $_ $[| $_ $[$_]?]?) =>
+      if assignmentNeedsWrapper lhs then
+        `(doElem| veil_state_assign% $elem:doElem)
+      else pure elem
+    | _ => pure elem
+  let head? := if lhs.raw.isIdent then some lhs.raw.getId
+    else lhs.isApp?.map (fun (head, _) => head.getId)
+  let mod ← getCurrentModule
+  if head?.any (fun name => mod.signature.any fun sc =>
+      sc.name == name.eraseMacroScopes && sc.isPartialFunction) then
+    -- The clear resolves the target at elaboration time: a shadowing local
+    -- keeps ordinary assignment semantics. A nested sequence also keeps an
+    -- effectful RHS after the clear instead of lifting it above the write.
+    return (← `(doElem| do
+      veil_partial_clear% $lhs
+      $wrapped:doElem)).raw
+  return wrapped.raw
 
 /- Hide application-shaped state writes behind a private `doElem` kind before
 Lean infers reaching-definition control information. Lean otherwise interprets
@@ -73,17 +107,6 @@ Lean's assignment elaborator, which runs first, does not reject them: Veil must
 transform them into assignments Lean accepts. -/
 def prepareStateAssignments (stx : Syntax) : TermElabM Syntax :=
   rewriteAssignments stx false
-
-/-- The target (left-hand side) of an assignment-shaped statement: plain
-(`:=`), arrow (`←`), or havoc (`:= *`). The single source of truth for what
-counts as an assignment shape — pre-elaboration validation (`Entry.lean`) and
-control-info reporting below must never disagree about it. -/
-def assignmentLhs? (elem : DoElem) : Option Term :=
-  match elem with
-  | `(doReassign| $lhs:term $[: $_]? := $_) => some lhs
-  | `(doReassignArrow| $lhs:term $[: $_]? ← $_ $[| $_ $[$_]?]?) => some lhs
-  | `(doElem| $lhs:term := *) => some lhs
-  | _ => none
 
 /-- The head identifier of an assignment-shaped statement's target (wrapped
 assignments and havoc). -/
@@ -391,6 +414,23 @@ private def elabStateAssignment (ctx : Context) (component : StateComponent)
   let caps ← implicitCapitals ctx target.args
   checkRepeatedCapitals target caps
   elabAnalyzedStateAssignment ctx.mod component target caps rhs ref dec
+
+@[doElem_elab partialFunctionClear]
+def elabPartialFunctionClear : DoElab := fun stx dec => do
+  let ctx ← requireVeilDoBlock
+  let `(doElem| veil_partial_clear% $lhs:term) := stx | throwUnsupportedSyntax
+  let target ← parseTarget lhs
+  openStateAround ctx.mod do
+    match ← resolveAssignmentTarget ctx target with
+    | .local => (← dec.ensureUnitAt stx).continueWithUnit
+    | .state component =>
+      -- This is an ordinary assignment of a constantly false relation to the
+      -- selected input slice. The original assignment follows unchanged.
+      let target := { target with args := target.args.take (component.domainTerms.size - 1) }
+      let binders := Array.replicate (component.domainTerms.size - target.args.size)
+        (← `(Term.funBinder| _))
+      let cleared ← mkFunSyntax binders (← `(false))
+      elabStateAssignment ctx component target cleared stx dec
 
 /-- Compile an indexed local update whose capital analysis (`caps`) already
 ran. The tuple-update macro classifies capitals by spelling alone, so every

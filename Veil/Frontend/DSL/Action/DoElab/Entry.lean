@@ -68,7 +68,7 @@ private def classifiedDoElemKinds : NameSet := .ofList [
   ``Lean.Parser.Term.InternalSyntax.doSkip,
   -- Veil's own statements
   ``requireDo, ``assertDo, ``ifSomeDo, ``letPick, ``havocAssignment,
-  ``veilLetDo, ``veilVarDo, ``stateAssignWrapper, ``internalExpr,
+  ``veilLetDo, ``veilVarDo, ``stateAssignWrapper, ``partialFunctionClear, ``internalExpr,
   ``theoryOpen,
   -- rejected with targeted diagnostics
   ``Lean.Parser.Term.doLetRec, ``Lean.Parser.Term.doFor,

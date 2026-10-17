@@ -178,6 +178,10 @@ Functions can also be defined with names for the arguments, e.g.
 -/
 scoped syntax (name := functionStateComponent) kw_function : stateComponentKind
 
+/-- A relation with at most one output per input tuple, without totality.
+`partial function f : A → B` stores a relation of type `A → B → Bool`. -/
+scoped syntax (name := partialFunctionStateComponent) "partial" kw_function : stateComponentKind
+
 /-- This state component is the state of another module. -/
 scoped syntax (name := moduleStateComponent) kw_module : stateComponentKind
 

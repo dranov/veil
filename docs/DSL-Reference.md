@@ -149,6 +149,40 @@ function currentRound : node -> Nat
 immutable function nextNode : node -> node
 ```
 
+#### Partial functions
+
+A partial function has at most one output for each input tuple:
+
+```lean
+partial function source : vertex → node
+partial function entry (n : node) (i : index) : value
+```
+
+These declarations store Boolean relations, respectively `vertex → node → Bool`
+and `node → index → value → Bool`. Veil generates a checked invariant named
+`source_coherence` (or `entry_coherence`) asserting uniqueness of the last
+argument. It imposes no totality requirement: an input may have no output.
+Coherence is checked for immutable partial functions too; verification needs
+explicit background assumptions sufficient to establish it.
+
+An assignment first clears all outputs for the selected inputs, then performs
+the relation assignment. Thus `source v n := p` behaves as:
+
+```lean
+source v N := false
+source v n := p
+```
+
+Here the second statement denotes an ordinary relation write. The right-hand
+side and its index expressions read the state after clearing. This applies to
+every right-hand side, including procedure calls (`←` and nested `(← …)`):
+they run after the clear, and their effects are kept by the final relation
+write. `source v n := False` makes `source v` undefined,
+regardless of its previous output. Uppercase indices retain their usual bulk
+update semantics; all selected inputs are cleared before the right-hand side
+is evaluated. Bulk writes that produce multiple outputs fail the generated
+coherence check.
+
 #### Mutability
 
 - **Mutable** (default): Can be modified by actions

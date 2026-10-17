@@ -59,7 +59,7 @@ instance : ToString StateComponentKind where
 def StateComponentKind.fromStx (k : TSyntax `stateComponentKind) : StateComponentKind :=
   match k with
   | `(stateComponentKind|individual) => StateComponentKind.individual
-  | `(stateComponentKind|relation) => StateComponentKind.relation
+  | `(stateComponentKind|relation) | `(stateComponentKind|partial function) => StateComponentKind.relation
   | `(stateComponentKind|function) => StateComponentKind.function
   | _ => panic! s!"Invalid state component kind: {k}"
 

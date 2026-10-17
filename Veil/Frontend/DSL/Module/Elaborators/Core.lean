@@ -118,6 +118,8 @@ def elabStateComponent : CommandElab := fun stx => do
   let new_mod : Module ← match stx with
   | `($mutab:stateMutability ? $kind:stateComponentKind $name:ident $br:bracketedBinder* : $dom:term) =>
     defineStateComponentFromSyntax mod mutab kind name br dom stx
+  | `($_:stateMutability ? partial function $_:ident $_:bracketedBinder*) =>
+    throwError "a partial function must declare its output type, e.g. `partial function f (a : A) : B`"
   | `(command|$mutab:stateMutability ? relation $name:ident $br:bracketedBinder*) => do
     defineStateComponentFromSyntax mod mutab (← `(stateComponentKind|relation)) name br (← `(term|$(mkIdent ``Bool))) stx
   | _ => throwUnsupportedSyntax
@@ -127,6 +129,7 @@ where
   (mod : Module) (mutability : Option (TSyntax `stateMutability)) (kind : TSyntax `stateComponentKind)
   (name : Ident) (br : TSyntaxArray ``Term.bracketedBinder) (dom : Term) (userStx : Syntax) : CommandElabM Module := do
     let mutability := Mutability.fromStx mutability
+    let isPartialFunction := kind.raw.isOfKind ``partialFunctionStateComponent
     let kind := StateComponentKind.fromStx kind
     let sctype ← (
       if br.isEmpty then
@@ -134,7 +137,13 @@ where
       else
         return StateComponentType.complex br dom)
     let (domainTerms, codomainTerm) ← analyzeTypesOfStateComponents sctype
-    let sc : StateComponent := { mutability := mutability, kind := kind, name := name.getId, «type» := sctype, userSyntax := userStx, domainTerms, codomainTerm }
+    let (sctype, domainTerms, codomainTerm) ← if isPartialFunction then do
+      let domains := domainTerms.push codomainTerm
+      let codomain ← `(term| Bool)
+      let relationType ← mkArrowStx domains.toList (some codomain)
+      pure (.simple (← `(Command.structSimpleBinder| $name:ident : $relationType)), domains, codomain)
+    else pure (sctype, domainTerms, codomainTerm)
+    let sc : StateComponent := { mutability := mutability, kind := kind, name := name.getId, «type» := sctype, userSyntax := userStx, domainTerms, codomainTerm, isPartialFunction }
     Module.declareStateComponent mod sc
   /-- For each `sc` in `components`, analyze its type to extract the arguments
   (domain) and codomain. -/
@@ -235,6 +244,26 @@ private def generateIgnoreFn (mod : Module) : CommandElabM Unit := do
   elabVeilCommand cmd
 
 
+/-- Partial functions reuse ordinary relations and checked invariants. There
+is deliberately no totality assertion or trusted coherence assumption. -/
+private def Module.definePartialFunctionCoherence (mod : Module) : CommandElabM Module := do
+  let mut mod := mod
+  for sc in mod.signature.filter (·.isPartialFunction) do
+    let inputTypes := sc.domainTerms.pop
+    let outputType := sc.domainTerms.back!
+    let fresh (hint : Name) : CommandElabM Ident := do
+      return Lean.mkIdent (← liftCoreM <| mkFreshUserName hint)
+    let inputs ← inputTypes.mapM fun _ => fresh `input
+    let left ← fresh `output
+    let right ← fresh `output
+    let f := mkIdent sc.name
+    let prop ← `(∀ $[($inputs : $inputTypes)]* ($left $right : $outputType),
+      $f $inputs* $left ∧ $f $inputs* $right → $left = $right)
+    let name ← `(propertyName| [$(mkIdent <| sc.name.appendAfter "_coherence")])
+    let assertion ← mod.mkAssertion .invariant (some name) prop sc.userSyntax
+    mod ← mod.defineAssertion assertion
+  return mod
+
 /-- Crystallizes the state of the module, i.e. it defines it as a Lean
 `structure` definition, if that hasn't already happened. -/
 def Module.ensureStateIsDefined (mod : Module) : CommandElabM Module := do
@@ -264,7 +293,7 @@ def Module.ensureStateIsDefined (mod : Module) : CommandElabM Module := do
       elabVeilCommand cmd
     catch ex =>
       logWarning m!"unable to generate transition weakening lemma: {ex.toMessageData}"
-  pure mod
+  mod.definePartialFunctionCoherence
 
 /-- Generate the executable definitions with `cfg`, unless the module has them already (whatever
 options they were generated with). -/
