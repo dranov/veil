@@ -46,6 +46,22 @@ def partialFunctionClearControlInfo : ControlInfoHandler := fun _ =>
 private def assignmentNeedsWrapper (lhs : Term) : Bool :=
   (lhs.raw.isIdent && !lhs.raw.getId.isAtomic) || lhs.isApp?.isSome
 
+/-- Prepend the clear for a partial-function assignment. Resolution is deferred
+until elaboration so a shadowing local keeps ordinary assignment semantics.
+The nested sequence keeps RHS effects after the clear. -/
+private def prependPartialFunctionClear (lhs : Term) (assignment : DoElem) :
+    TermElabM DoElem := do
+  let head? := if lhs.raw.isIdent then some lhs.raw.getId
+    else lhs.isApp?.map (fun (head, _) => head.getId)
+  let some head := head? | return assignment
+  let mod ← getCurrentModule
+  unless mod.signature.any (fun sc =>
+      sc.name == head.eraseMacroScopes && sc.isPartialFunction) do
+    return assignment
+  `(doElem| do
+    veil_partial_clear% $lhs
+    $assignment:doElem)
+
 private def wrapAssignment (stx : Syntax) : TermElabM Syntax := do
   let elem : DoElem := ⟨stx⟩
   let some lhs := assignmentLhs? elem | return stx
@@ -56,18 +72,7 @@ private def wrapAssignment (stx : Syntax) : TermElabM Syntax := do
         `(doElem| veil_state_assign% $elem:doElem)
       else pure elem
     | _ => pure elem
-  let head? := if lhs.raw.isIdent then some lhs.raw.getId
-    else lhs.isApp?.map (fun (head, _) => head.getId)
-  let mod ← getCurrentModule
-  if head?.any (fun name => mod.signature.any fun sc =>
-      sc.name == name.eraseMacroScopes && sc.isPartialFunction) then
-    -- The clear resolves the target at elaboration time: a shadowing local
-    -- keeps ordinary assignment semantics. A nested sequence also keeps an
-    -- effectful RHS after the clear instead of lifting it above the write.
-    return (← `(doElem| do
-      veil_partial_clear% $lhs
-      $wrapped:doElem)).raw
-  return wrapped.raw
+  return (← prependPartialFunctionClear lhs wrapped).raw
 
 /- Hide application-shaped state writes behind a private `doElem` kind before
 Lean infers reaching-definition control information. Lean otherwise interprets
